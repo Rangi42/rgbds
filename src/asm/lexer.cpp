@@ -1430,6 +1430,7 @@ static void appendExpandedString(std::string &str, std::string const &expanded) 
 			break;
 		case '\\':
 		case '"':
+		case '\'':
 		case '{':
 			str += '\\';
 			[[fallthrough]];
@@ -1450,6 +1451,7 @@ static void appendCharInLiteral(std::string &str, int c) {
 		// Character escape
 		case '\\':
 		case '"':
+		case '\'':
 		case '{':
 		case '}':
 			if (rawMode) {
@@ -1530,7 +1532,7 @@ static void appendCharInLiteral(std::string &str, int c) {
 		break;
 
 	case '{': // Symbol interpolation
-		// We'll be exiting the string scope, so re-enable expansions
+		// We'll be exiting the string/character scope, so re-enable expansions
 		// (Not interpolations, since they're handled by the function itself...)
 		lexerState->disableMacroArgs = false;
 		if (auto interpolation = readInterpolation(0); interpolation) {
@@ -1624,6 +1626,37 @@ static void readString(std::string &str, bool rawString) {
 		} else {
 			appendCharInLiteral(str, c);
 		}
+	}
+}
+
+static void readCharacter(std::string &chr) {
+	// This is essentially a simplified `readString`
+	Defer reenableExpansions = scopedDisableExpansions();
+
+	bool rawMode = lexerState->mode == LEXER_RAW;
+
+	for (;;) {
+		int c = peek();
+
+		// '\r', '\n' or EOF ends a character early
+		if (c == EOF || c == '\r' || c == '\n') {
+			error("Unterminated character");
+			return;
+		}
+
+		// We'll be staying in the character, so we can safely consume the char
+		shiftChar();
+
+		// Close the character and return if it's terminated
+		if (c == '\'') {
+			if (rawMode) {
+				chr += c;
+			}
+			return;
+		}
+
+		// Append the character or handle special ones
+		appendCharInLiteral(chr, c);
 	}
 }
 
@@ -1909,12 +1942,18 @@ static Token yylex_NORMAL() {
 		case '`': // Gfx constant
 			return Token(T_(NUMBER), readGfxConstant());
 
-			// Handle strings
+			// Handle string and character literals
 
 		case '"': {
 			std::string str;
 			readString(str, false);
 			return Token(T_(STRING), str);
+		}
+
+		case '\'': {
+			std::string chr;
+			readCharacter(chr);
+			return Token(T_(CHARACTER), chr);
 		}
 
 			// Handle newlines and EOF
@@ -2047,6 +2086,11 @@ static Token yylex_RAW() {
 			readString(str, false);
 			break;
 
+		case '\'': // Character literals inside macro args
+			shiftChar();
+			readCharacter(str);
+			break;
+
 		case '#': // Raw string literals inside macro args
 			str += c;
 			shiftChar();
@@ -2104,6 +2148,7 @@ backslash:
 			case ')':
 			case '\\': // Escapes shared with string literals
 			case '"':
+			case '\'':
 			case '{':
 			case '}':
 				break;
