@@ -1645,8 +1645,8 @@ static bool isGarbageCharacter(int c) {
 		return true;
 	}
 	// All other printable characters are not garbage (i.e. `yylex_NORMAL` handles them), and
-	// all other nonprintable characters are garbage (including '\0' and EOF)
-	return !isPrintable(c);
+	// all other nonprintable characters are garbage (including '\0' but not including EOF)
+	return !isPrintable(c) && c != EOF;
 }
 
 static void reportGarbageCharacters(int c) {

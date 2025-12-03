@@ -77,6 +77,21 @@ void act_Endc() {
 	lexer_DecIFDepth();
 }
 
+void act_AddLabel(std::string const &symName, bool local, bool exported) {
+	if (symName.starts_with('.') && symName.find_first_not_of('.') == symName.npos) {
+		error("`%s` is not a valid label", symName.c_str());
+		return;
+	}
+	if (local) {
+		sym_AddLocalLabel(symName);
+	} else {
+		sym_AddLabel(symName);
+	}
+	if (exported) {
+		sym_Export(symName);
+	}
+}
+
 AlignmentSpec act_Alignment(int32_t alignment, int32_t alignOfs) {
 	AlignmentSpec spec = {0, 0};
 	if (alignment > 16) {

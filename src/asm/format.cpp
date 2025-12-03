@@ -16,6 +16,8 @@
 #include "asm/main.hpp" // options
 #include "asm/warning.hpp"
 
+static constexpr size_t MAX_STR_SIZE = 0x1'000'000; // 1 MB
+
 size_t FormatSpec::parseSpec(char const *spec) {
 	size_t i = 0;
 
@@ -139,6 +141,11 @@ void FormatSpec::appendString(std::string &str, std::string const &value) const 
 	size_t totalLen = width > valueLen ? width : valueLen;
 	size_t padLen = totalLen - valueLen;
 
+	if (totalLen > str.max_size() - str.length() || totalLen > MAX_STR_SIZE) {
+		error("Formatting string would become too long");
+		return;
+	}
+
 	str.reserve(str.length() + totalLen);
 	if (alignLeft) {
 		str.append(useValue);
@@ -251,6 +258,11 @@ void FormatSpec::appendNumber(std::string &str, uint32_t value) const {
 	size_t numLen = (signChar != 0) + (prefixChar != 0) + valueLen;
 	size_t totalLen = width > numLen ? width : numLen;
 	size_t padLen = totalLen - numLen;
+
+	if (totalLen > str.max_size() - str.length() || totalLen > MAX_STR_SIZE) {
+		error("Formatting string would become too long");
+		return;
+	}
 
 	str.reserve(str.length() + totalLen);
 	if (alignLeft) {

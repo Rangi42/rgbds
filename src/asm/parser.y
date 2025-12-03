@@ -525,21 +525,19 @@ scoped_sym: scoped_sym_no_anon | ANON;
 label:
 	  %empty
 	| LABEL COLON {
-		sym_AddLabel($1);
+		act_AddLabel($1, false, false);
 	}
 	| LABEL DOUBLE_COLON {
-		sym_AddLabel($1);
-		sym_Export($1);
+		act_AddLabel($1, false, true);
 	}
 	| LOCAL {
-		sym_AddLocalLabel($1);
+		act_AddLabel($1, true, false);
 	}
 	| LOCAL COLON {
-		sym_AddLocalLabel($1);
+		act_AddLabel($1, true, false);
 	}
 	| LOCAL DOUBLE_COLON {
-		sym_AddLocalLabel($1);
-		sym_Export($1);
+		act_AddLabel($1, true, true);
 	}
 	| COLON {
 		sym_AddAnonLabel();

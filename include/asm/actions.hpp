@@ -25,6 +25,8 @@ void act_Elif(int32_t condition);
 void act_Else();
 void act_Endc();
 
+void act_AddLabel(std::string const &symName, bool local, bool exported);
+
 AlignmentSpec act_Alignment(int32_t alignment, int32_t alignOfs);
 
 void act_Assert(AssertionType type, Expression const &expr, std::string const &message);
