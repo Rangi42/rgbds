@@ -745,9 +745,14 @@ The result may be constant if
 is able to compute it.
 .It Fn SECTION symbol Ta Returns the name of the section that
 .Ar symbol
-is in.
+is defined in.
 .Ar symbol
 must have been defined already.
+If
+.Ar arg
+is the symbol
+.Ic @ ,
+this function returns the name of the current section.
 .It Fn SIZEOF arg Ta If
 .Ar arg
 is a string, this function returns the size of the section named
