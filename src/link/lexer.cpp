@@ -192,15 +192,16 @@ static yy::parser::symbol_type parseAnyNumber(int c) {
 
 static yy::parser::symbol_type parseString() {
 	LexerStackEntry &context = lexerStack.back();
-	int c = context.file.sgetc();
 	std::string str;
-	for (; c != '"'; c = context.file.sgetc()) {
+	for (int c = context.file.sgetc();; c = context.file.sgetc()) {
 		if (c == EOF || isNewline(c)) {
 			scriptError("Unterminated string");
 			break;
 		}
 		context.file.sbumpc();
-		if (c == '\\') {
+		if (c == '"') {
+			break;
+		} else if (c == '\\') {
 			c = context.file.sgetc();
 			if (c == EOF || isNewline(c)) {
 				scriptError("Unterminated string");
@@ -219,9 +220,6 @@ static yy::parser::symbol_type parseString() {
 			context.file.sbumpc();
 		}
 		str.push_back(c);
-	}
-	if (c == '"') {
-		context.file.sbumpc();
 	}
 	return yy::parser::make_string(std::move(str));
 }
