@@ -8,9 +8,9 @@ make coverage -j
 pushd test
 ./fetch-test-deps.sh
 if [[ $# -eq 0 ]]; then
-  ./run-tests.sh
+  ./run-tests.sh --jobs 4
 else
-  ./run-tests.sh --os "$1"
+  ./run-tests.sh --os "$1" --jobs 4
 fi
 popd
 

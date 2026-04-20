@@ -52,7 +52,7 @@ jobs:
         if: matrix.buildsys == 'make'
         run: |
           make develop -kj Q= CXX=${{ matrix.cxx }}
-          sudo make install -j Q=
+          sudo make install -j4 Q=
       - name: Build & install using CMake
         if: matrix.buildsys == 'cmake'
         # Since GitHub's runners are basically kitchen sinks,
@@ -98,7 +98,7 @@ jobs:
       - name: Run tests using our script
         if: matrix.buildsys == 'make'
         run: |
-          CXX=${{ matrix.cxx }} test/run-tests.sh --os ${{ matrix.os }}
+          CXX=${{ matrix.cxx }} test/run-tests.sh --os ${{ matrix.os }} --jobs 4
       - name: Run tests using CTest
         if: matrix.buildsys == 'cmake'
         run: |
@@ -311,7 +311,7 @@ jobs:
           test/fetch-test-deps.sh --get-deps ${{ matrix.os }}
       - name: Run tests
         run: |
-          test/run-tests.sh --os ${{ matrix.os }}
+          test/run-tests.sh --os ${{ matrix.os }} --jobs 4
 
   cygwin:
     strategy:
@@ -345,10 +345,10 @@ jobs:
       - name: Build & install using Make
         run: | # Cygwin does not support `make develop` sanitizers ASan or UBSan
           make -kj Q=
-          make install -j Q=
+          make install -j4 Q=
       - name: Run tests
         run: |
-          test/run-tests.sh --only-internal
+          test/run-tests.sh --jobs 4 --only-internal
 
   freebsd:
     runs-on: ubuntu-latest
