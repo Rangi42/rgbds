@@ -12,7 +12,8 @@ add_library(common OBJECT
 target_compile_definitions(common PRIVATE "BUILD_VERSION_STRING=\"${GIT_REV}\"")
 
 find_package(BISON 3.0.0 REQUIRED)
-# FIXME: Using a list would be cleaner, but is not supported by `bison_target` before CMake 4.0.
+# BISON 4.0 deprecates passing this BISON_FLAGS string to `bison_target`'s `COMPILE_FLAGS`,
+# in favor of passing a list to `OPTIONS`, but that would require dropping support for CMake <4.0.
 set(BISON_FLAGS "-Wall -Dlr.type=ielr")
 # Set some flags on versions that support them.
 if(BISON_VERSION VERSION_GREATER_EQUAL "3.5")
