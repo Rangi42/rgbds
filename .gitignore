@@ -8,6 +8,7 @@
 *.o
 *.exe
 *.dll
+*.pdb
 *.gcno
 *.gcda
 *.gcov
