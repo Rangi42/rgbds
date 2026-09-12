@@ -353,7 +353,7 @@ void reverse() {
 			}
 		}
 
-		if (nbTilesInBank[0] + nbTilesInBank[1] > nbTiles) {
+		if (nbTilesInBank[0] + nbTilesInBank[1] > nbTiles + options.trim) {
 			fatal(
 			    "The tilemap references %" PRIu16 " tiles in bank 0 and %" PRIu16
 			    " in bank 1, but only %zu have been read in total",
@@ -390,7 +390,9 @@ void reverse() {
 				}
 			}
 		} else {
-			size_t const limit = std::min<size_t>(nbTiles, options.maxNbTiles[0]);
+			// Tiles trimmed with `-x` were never written to the tile data file, but are
+			// still referenced by the tilemap.
+			size_t const limit = std::min<size_t>(nbTiles + options.trim, options.maxNbTiles[0]);
 			for (size_t index = 0; index < mapSize; ++index) {
 				size_t tx = index % width, ty = index / width;
 				uint8_t tileID = (*tilemap)[index];

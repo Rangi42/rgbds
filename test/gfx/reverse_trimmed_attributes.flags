@@ -1,0 +1,3 @@
+-x 1
+-t reverse_trimmed_attributes.tilemap
+-a reverse_trimmed_attributes.attrmap
