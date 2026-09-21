@@ -8,7 +8,6 @@
 #include <inttypes.h>
 #include <ios>
 #include <optional>
-#include <png.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -77,8 +76,8 @@ public:
 };
 
 struct Image {
-	Png png{};
-	ImagePalette colors{};
+	Png png;
+	ImagePalette colors;
 
 	Rgba &pixel(uint32_t x, uint32_t y) { return png.pixels[y * png.width + x]; }
 	Rgba const &pixel(uint32_t x, uint32_t y) const { return png.pixels[y * png.width + x]; }
@@ -127,14 +126,7 @@ struct Image {
 		return {GrayscaleResult::GRAY_OK, std::nullopt};
 	}
 
-	explicit Image(std::string const &path) {
-		File input;
-		if (input.open(path, std::ios_base::in | std::ios_base::binary) == nullptr) {
-			fatal("Failed to open input image (\"%s\"): %s", input.c_str(path), strerror(errno));
-		}
-
-		png = Png(input.c_str(path), *input);
-
+	explicit Image(Png &&png_) : png(std::move(png_)), colors() {
 		// Validate input slice
 		if (options.inputSlice.width == 0 && png.width % 8 != 0) {
 			fatal("Image width (%" PRIu32 " pixels) is not a multiple of 8", png.width);
@@ -1001,8 +993,6 @@ static void
 }
 
 void processPalettes() {
-	verbosePrint(VERB_CONFIG, "Using libpng %s\n", png_get_libpng_ver(nullptr));
-
 	std::vector<ColorSet> colorSets;
 	std::vector<Palette> palettes;
 	std::tie(std::ignore, palettes) = makePalsAsSpecified(colorSets);
@@ -1010,11 +1000,9 @@ void processPalettes() {
 	outputPalettes(palettes);
 }
 
-void process() {
-	verbosePrint(VERB_CONFIG, "Using libpng %s\n", png_get_libpng_ver(nullptr));
-
+void process(Png &&png) {
 	verbosePrint(VERB_NOTICE, "Reading tiles...\n");
-	Image image(options.input); // This also sets `hasTransparentPixels` as a side effect
+	Image image(std::move(png)); // This also sets `hasTransparentPixels` as a side effect
 
 	// LCOV_EXCL_START
 	verboseDo(VERB_INFO, [&]() {

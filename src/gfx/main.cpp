@@ -3,8 +3,8 @@
 #include "gfx/main.hpp"
 
 #include <inttypes.h>
-#include <ios>
 #include <optional>
+#include <png.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -16,7 +16,6 @@
 
 #include "cli.hpp"
 #include "diagnostics.hpp"
-#include "file.hpp"
 #include "helpers.hpp"
 #include "platform.hpp"
 #include "style.hpp" // style_Parse
@@ -479,6 +478,7 @@ static void parseArg(int ch, char *arg) {
 // LCOV_EXCL_START
 static void verboseOutputConfig() {
 	usage.printVersion(true);
+	fprintf(stderr, "Using libpng %s\n", png_get_libpng_ver(nullptr));
 
 	printVVVVVVerbosity();
 
@@ -524,7 +524,13 @@ static void verboseOutputConfig() {
 		break;
 	case Options::INLINE:
 	case Options::EXTERNAL:
-		fputs("\tExplicit palette spec\n\t[\n", stderr);
+	case Options::EMBEDDED:
+		if (options.palSpecType == Options::EMBEDDED) {
+			fputs("\tEmbedded palette spec from PNG indexed PLTE chunk\n", stderr);
+		} else {
+			fputs("\tExplicit palette spec\n", stderr);
+		}
+		fputs("\t[\n", stderr);
 		for (auto const &pal : options.palSpec) {
 			fputs("\t\t", stderr);
 			for (auto const &color : pal) {
@@ -537,9 +543,6 @@ static void verboseOutputConfig() {
 			putc('\n', stderr);
 		}
 		fputs("\t]\n", stderr);
-		break;
-	case Options::EMBEDDED:
-		fputs("\tEmbedded palette spec from PNG indexed PLTE chunk\n", stderr);
 		break;
 	case Options::DMG:
 		fprintf(stderr, "\tDMG palette spec $%02" PRIx8 "\n", options.palSpecDmg);
@@ -671,13 +674,25 @@ int main(int argc, char *argv[]) {
 	autoOutPath(localOptions.autoPalettes, options.palettes, ".pal");
 	autoOutPath(localOptions.autoPalmap, options.palmap, ".palmap");
 
+	// Read the input image now since it may be needed for parsing an embedded palette spec
+	bool useInputImage = !options.input.empty() && !localOptions.reverse;
+	Png png;
+	if (useInputImage) {
+		png = Png(options.input);
+	}
+
 	// Execute deferred pal spec parsing, now that all other params are known.
 	// Do not parse pal specs if `options.nbColorsPerPal` is invalid.
 	if (options.nbColorsPerPal > 0 && options.nbColorsPerPal <= 4) {
 		switch (options.palSpecType) {
 		case Options::NO_SPEC:
+			assume(!localOptions.palSpec);
+			break;
 		case Options::EMBEDDED:
 			assume(!localOptions.palSpec);
+			if (useInputImage) {
+				parseEmbeddedPalSpec(png);
+			}
 			break;
 		case Options::INLINE:
 			assume(localOptions.palSpec);
@@ -703,7 +718,7 @@ int main(int argc, char *argv[]) {
 		if (localOptions.reverse) {
 			reverse();
 		} else {
-			process();
+			process(std::move(png));
 		}
 	} else if (!options.palettes.empty() && options.hasExplicitPalSpec() && !localOptions.reverse) {
 		processPalettes();
