@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 
+#include "platform.hpp"
+
 #include "gfx/main.hpp"
 
 #include <inttypes.h>
@@ -18,7 +20,6 @@
 #include "diagnostics.hpp"
 #include "file.hpp"
 #include "helpers.hpp"
-#include "platform.hpp"
 #include "style.hpp" // style_Parse
 #include "usage.hpp"
 #include "util.hpp"
