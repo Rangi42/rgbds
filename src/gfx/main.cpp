@@ -3,7 +3,6 @@
 #include "gfx/main.hpp"
 
 #include <inttypes.h>
-#include <ios>
 #include <optional>
 #include <png.h>
 #include <stdarg.h>
@@ -17,7 +16,6 @@
 
 #include "cli.hpp"
 #include "diagnostics.hpp"
-#include "file.hpp"
 #include "helpers.hpp"
 #include "platform.hpp"
 #include "style.hpp" // style_Parse
@@ -680,14 +678,7 @@ int main(int argc, char *argv[]) {
 	bool useInputImage = !options.input.empty() && !localOptions.reverse;
 	Png png;
 	if (useInputImage) {
-		if (File image;
-		    image.open(options.input, std::ios_base::in | std::ios_base::binary) == nullptr) {
-			fatal(
-			    "Failed to open PNG image (\"%s\"): %s", image.c_str(options.input), strerror(errno)
-			);
-		} else {
-			png = Png(image.c_str(options.input), *image);
-		}
+		png = Png(options.input);
 	}
 
 	// Execute deferred pal spec parsing, now that all other params are known.
