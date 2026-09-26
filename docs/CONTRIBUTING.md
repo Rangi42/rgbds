@@ -197,11 +197,11 @@ RGBFIX will be invoked on the `.bin` file if it exists, or else on
 default-input.bin.
 
 If no `.out` file exist, RGBFIX is not expected to output anything.
-If one _does_ exist, RGBFIX's output **must** match the `.out` file's contents.
+If one *does* exist, RGBFIX's output **must** match the `.out` file's contents.
 
 If no `.err` file exists, RGBFIX is simply expected to be able to process the
 file normally.
-If one _does_ exist, RGBFIX's return status is ignored, but its error output
+If one *does* exist, RGBFIX's return status is ignored, but its error output
 **must** match the `.err` file's contents.
 
 Additionally, if a `.gb` file exists, the output of RGBFIX must match the `.gb`.
@@ -224,7 +224,7 @@ Multiple kinds of output may be tested for the same input.
 
 If no `.err` file exists, RGBGFX is simply expected to be able to process the
 file normally.
-If one _does_ exist, RGBGFX's return status is ignored, but its output **must**
+If one *does* exist, RGBGFX's return status is ignored, but its output **must**
 match the `.err` file's contents.
 
 #### Reverse tests
