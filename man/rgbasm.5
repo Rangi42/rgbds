@@ -2521,7 +2521,7 @@ An
 .Ic ASSERT
 is evaluated by RGBASM if it can, otherwise by RGBLINK; but a
 .Ic STATIC_ASSERT
-is only ever evaluated by RGBASM.
+that RGBASM cannot evaluate will raise an error.
 If RGBASM cannot compute the value of the argument to
 .Ic STATIC_ASSERT ,
 it will produce an error.
