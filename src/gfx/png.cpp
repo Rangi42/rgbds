@@ -64,9 +64,9 @@ static void readData(png_structp png, png_bytep data, size_t length) {
 
 Png::Png(std::string const &path) {
 	if (File image; image.open(path, std::ios_base::in | std::ios_base::binary) == nullptr) {
-		fatal("Failed to open PNG image (\"%s\"): %s", image.c_str(path), strerror(errno));
+		fatal("Failed to open PNG image (\"%s\"): %s", image.display_name(path), strerror(errno));
 	} else {
-		initialize(image.c_str(path), *image);
+		initialize(image.display_name(path), *image);
 	}
 }
 
