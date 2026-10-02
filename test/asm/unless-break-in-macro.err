@@ -1,0 +1,2 @@
+FATAL: `UNLESS_BREAK` can only be used at the top level of a loop (`REPT`/`FOR` block) body
+    at unless-break-in-macro.asm::m(3) <- unless-break-in-macro.asm::REPT~1(8) <- unless-break-in-macro.asm(7)

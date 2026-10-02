@@ -1,0 +1,2 @@
+FATAL: Found a second `UNLESS_BREAK` in the same loop (`REPT`/`FOR` block)
+    at unless-break-twice.asm(6)

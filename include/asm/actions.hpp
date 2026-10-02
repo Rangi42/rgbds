@@ -25,6 +25,7 @@ void act_If(int32_t condition);
 void act_Elif(int32_t condition);
 void act_Else();
 void act_Endc();
+void act_UnlessBreak();
 
 AlignmentSpec act_Alignment(int32_t alignment, int32_t alignOfs);
 

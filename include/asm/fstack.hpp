@@ -81,6 +81,7 @@ void fstk_RunFor(
     bool isQuiet
 );
 bool fstk_Break();
+bool fstk_AssembleUnlessBreak();
 
 void fstk_NewRecursionDepth(size_t newDepth);
 bool fstk_Init(std::string const &mainPath);

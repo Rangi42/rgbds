@@ -241,6 +241,7 @@ static UpperMap<int> const keywords{
     {"FOR",           T_(POP_FOR)          },
     {"ENDR",          T_(POP_ENDR)         },
     {"BREAK",         T_(POP_BREAK)        },
+    {"UNLESS_BREAK",  T_(POP_UNLESS_BREAK) },
 
     {"LOAD",          T_(POP_LOAD)         },
     {"ENDL",          T_(POP_ENDL)         },
@@ -2089,6 +2090,10 @@ static UpperMap<int> const leadingKeywords{
     {"ELSE", T_(POP_ELSE)},
     {"ELIF", T_(POP_ELIF)},
     {"ENDC", T_(POP_ENDC)},
+
+    // `UNLESS_BREAK` needs to be recognized here as well, so that a loop body's structure can be
+    // checked while capturing it
+    {"UNLESS_BREAK", T_(POP_UNLESS_BREAK)},
 };
 
 static Token skipToLeadingKeywordFast(Procedure<> auto shiftFast) {
@@ -2269,6 +2274,41 @@ static Token yylex_SKIP_TO_ENDR() {
 	}
 }
 
+// Used for a `REPT` or `FOR` block which will run no iterations at all: none of its body is
+// assembled, except for its `UNLESS_BREAK` block, which is, just like for a loop which ran to
+// completion without being broken out of.
+static Token yylex_SKIP_TO_UNLESS_BREAK() {
+	lexer_SetMode(LEXER_NORMAL);
+
+	size_t depth = 0;
+	Defer reenableExpansions = scopedDisableExpansions();
+	for (;;) {
+		switch (Token token = skipToLeadingKeyword(); token.type) {
+		case T_(YYEOF):
+			return token;
+
+		case T_(POP_REPT):
+		case T_(POP_FOR):
+			// Nested loops' `UNLESS_BREAK` blocks are not assembled either, since nothing
+			// within this body is
+			++depth;
+			break;
+
+		case T_(POP_ENDR):
+			if (depth != 0) {
+				--depth;
+			}
+			break;
+
+		case T_(POP_UNLESS_BREAK):
+			if (depth == 0) {
+				return token;
+			}
+			break;
+		}
+	}
+}
+
 // LCOV_EXCL_START
 static void verboseOutputString(std::string_view str) {
 	static constexpr size_t max_len = 40;
@@ -2311,12 +2351,13 @@ yy::parser::symbol_type yylex() {
 		nextLine();
 	}
 
-	static Token (* const lexerModeFuncs[NB_LEXER_MODES])() = {
+static Token (* const lexerModeFuncs[NB_LEXER_MODES])() = {
 	    yylex_NORMAL,
 	    yylex_RAW,
 	    yylex_SKIP_TO_ELIF,
 	    yylex_SKIP_TO_ENDC,
 	    yylex_SKIP_TO_ENDR,
+	    yylex_SKIP_TO_UNLESS_BREAK,
 	};
 	Token token = lexerModeFuncs[lexerState->mode]();
 
@@ -2429,15 +2470,52 @@ static Capture makeCapture(char const *name, InvocableR<int, int> auto callback)
 }
 
 Capture lexer_CaptureRept() {
-	size_t depth = 0;
-	return makeCapture("loop (`REPT`/`FOR` block)", [&depth](int tokenType) {
-		if (tokenType == T_(POP_REPT) || tokenType == T_(POP_FOR)) {
-			++depth;
-		} else if (tokenType == T_(POP_ENDR)) {
-			if (depth == 0) {
+	size_t reptDepth = 0;
+	uint32_t ifDepth = 0;
+	bool sawUnlessBreak = false;
+	return makeCapture("loop (`REPT`/`FOR` block)", [&](int tokenType) {
+		switch (tokenType) {
+		case T_(POP_REPT):
+		case T_(POP_FOR):
+			++reptDepth;
+			break;
+
+		case T_(POP_ENDR):
+			if (reptDepth == 0) {
 				return literal_strlen("ENDR");
 			}
-			--depth;
+			--reptDepth;
+			break;
+
+		case T_(POP_IF):
+			++ifDepth;
+			break;
+
+		case T_(POP_ENDC):
+			--ifDepth;
+			break;
+
+			// `ELIF` and `ELSE` do not change the conditional's depth
+
+		case T_(POP_UNLESS_BREAK):
+			if (reptDepth != 0) {
+				// This one belongs to a nested loop, which checks its own body
+				break;
+			}
+			// An `UNLESS_BREAK` block is a part of the body it ends, so it may not be nested
+			// inside a conditional; check that here, since this is the only place where the
+			// loop body's entire structure is known
+			if (ifDepth != 0) {
+				fatal(
+				    "Found `UNLESS_BREAK` inside a conditional; it must be at the top level of a "
+				    "loop (`REPT`/`FOR` block) body"
+				);
+			}
+			if (sawUnlessBreak) {
+				fatal("Found a second `UNLESS_BREAK` in the same loop (`REPT`/`FOR` block)");
+			}
+			sawUnlessBreak = true;
+			break;
 		}
 		return 0;
 	});
