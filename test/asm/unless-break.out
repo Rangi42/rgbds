@@ -1,0 +1,62 @@
+0
+1
+2
+3
+4
+all done!
+0
+1
+2
+3
+4
+5
+6
+7
+break early
+rept 0
+for empty
+empty is ok
+  inner
+  inner
+  inner unless
+outer
+  inner
+  inner
+  inner unless
+outer
+outer unless
+  inner 0
+  inner 1
+  inner 2
+outer
+  inner 0
+  inner 1
+  inner 2
+outer
+outer unless
+A
+A
+  A unless 0
+  A unless 1
+B
+B
+B unless
+equs
+equs
+equs unless
+arg
+arg
+arg unless
+arg for 0
+arg for 1
+arg for unless
+  macro inner
+  macro inner
+  macro inner unless
+  macro inner
+  macro inner
+  macro inner unless
+macro outer unless
+body id=_u1
+body id=_u2
+unless id=_u3

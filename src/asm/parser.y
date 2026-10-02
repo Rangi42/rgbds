@@ -261,6 +261,7 @@
 %token POP_SHIFT "SHIFT"
 %token POP_STATIC_ASSERT "STATIC_ASSERT"
 %token POP_UNION "UNION"
+%token POP_UNLESS_BREAK "UNLESS_BREAK"
 %token POP_WARN "WARN"
 
 // Function keywords
@@ -475,6 +476,7 @@ line_directive:
 	// It's important that all of these require being at line start for `skipIfBlock`
 	| elif
 	| else
+	| unless_break
 ;
 
 if:
@@ -492,6 +494,14 @@ elif:
 else:
 	POP_ELSE NEWLINE {
 		act_Else();
+	}
+;
+
+// The block that follows is a part of the loop's body, so it needs no closing token of its own;
+// `act_UnlessBreak` skips it over unless it is the loop's last iteration
+unless_break:
+	POP_UNLESS_BREAK NEWLINE {
+		act_UnlessBreak();
 	}
 ;
 

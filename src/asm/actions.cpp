@@ -79,6 +79,14 @@ void act_Endc() {
 	lexer_DecIFDepth();
 }
 
+void act_UnlessBreak() {
+	// An `UNLESS_BREAK` block is a part of its loop's body, so it is skipped over unless this is
+	// the loop's last iteration, which was not broken out of
+	if (!fstk_AssembleUnlessBreak()) {
+		lexer_SetMode(LEXER_SKIP_TO_ENDR);
+	}
+}
+
 AlignmentSpec act_Alignment(int32_t alignment, int32_t alignOfs) {
 	AlignmentSpec spec = {0, 0};
 	if (alignment > 16) {

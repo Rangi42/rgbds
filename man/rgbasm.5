@@ -2400,6 +2400,69 @@ This will print:
 .Bd -literal -offset indent
 1, 2, 3, 4, 5 stop! done 5
 .Ed
+.Pp
+A
+.Ic REPT
+or
+.Ic FOR
+block may end with an
+.Ic UNLESS_BREAK
+block, terminated by the same
+.Ic ENDR
+as the rest of the loop.
+The
+.Ic UNLESS_BREAK
+block is a part of the loop's body, so it is assembled as part of the loop's last iteration, but only if the loop was not broken out of with
+.Ic BREAK .
+It acts much like the
+.Em else
+branch of a
+.Ic while
+or
+.Ic for
+loop in the Python programming language.
+For example:
+.Bd -literal -offset indent
+MACRO test
+    FOR x, \e1
+        PRINT "{d:x} "
+        IF x == 7
+            PRINT "stop! "
+            BREAK
+        ENDC
+    UNLESS_BREAK
+        PRINT "done "
+    ENDR
+ENDM
+    test 5
+    PRINTLN ""
+    test 10
+    PRINTLN ""
+.Ed
+.Pp
+This will print:
+.Bd -literal -offset indent
+0 1 2 3 4 done
+0 1 2 3 4 5 6 7 stop!
+.Ed
+.Pp
+A loop which ran no iterations at all was not broken out of either, so its
+.Ic UNLESS_BREAK
+block still gets assembled (but, as always, none of the rest of its body does).
+.Pp
+An
+.Ic UNLESS_BREAK
+block must be at the top level of its loop's body:
+it may not appear inside an
+.Ic IF
+/
+.Ic ELIF
+/
+.Ic ELSE
+block, nor inside a macro or included file, and a loop may only have one of them.
+.Pp
+Since the block is not assembled on every iteration, it gets a unique ID of its own for the escape sequence
+.Ic \e@ .
 .Ss Conditionally assembling blocks of code
 The four commands
 .Ic IF , ELIF , ELSE ,

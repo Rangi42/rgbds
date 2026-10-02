@@ -361,8 +361,13 @@ static void
 	context.lexerState.setViewAsNextState("MACRO", macro.getMacro(), macro.fileLine);
 }
 
-static Context &
-    newReptContext(int32_t reptLineNo, ContentSpan const &span, uint32_t count, bool isQuiet) {
+static Context &newReptContext(
+    int32_t reptLineNo,
+    ContentSpan const &span,
+    uint32_t count,
+    bool isQuiet,
+    LexerMode mode = LEXER_NORMAL
+) {
 	checkRecursionDepth();
 
 	Context &oldContext = contextStack.top();
@@ -385,6 +390,7 @@ static Context &
 	});
 
 	context.lexerState.setViewAsNextState("REPT", span, reptLineNo);
+	context.lexerState.mode = mode;
 
 	context.nbReptIters = count;
 
@@ -467,9 +473,11 @@ void fstk_RunMacro(InternedStr macroName, std::shared_ptr<MacroArgs> macroArgs, 
 }
 
 void fstk_RunRept(uint32_t count, int32_t reptLineNo, ContentSpan const &span, bool isQuiet) {
-	if (count) {
-		newReptContext(reptLineNo, span, count, isQuiet);
-	}
+	// A loop which runs no iterations assembles none of its body, but its `UNLESS_BREAK` block
+	// still gets assembled, since it was not broken out of; skip the body to reach it
+	uint32_t iterations = count ? count : 1;
+	LexerMode mode = count ? LEXER_NORMAL : LEXER_SKIP_TO_UNLESS_BREAK;
+	newReptContext(reptLineNo, span, iterations, isQuiet, mode);
 }
 
 void fstk_RunFor(
@@ -501,6 +509,8 @@ void fstk_RunFor(
 	}
 
 	if (count == 0) {
+		// As with `REPT 0`, none of the body is assembled, but its `UNLESS_BREAK` block is
+		newReptContext(reptLineNo, span, 1, isQuiet, LEXER_SKIP_TO_UNLESS_BREAK);
 		return;
 	}
 
@@ -518,6 +528,24 @@ bool fstk_Break() {
 	}
 
 	contextStack.top().nbReptIters = 0; // Prevent more iterations
+	return true;
+}
+
+bool fstk_AssembleUnlessBreak() {
+	Context &context = contextStack.top();
+
+	if (context.fileInfo->type != NODE_REPT) {
+		fatal("`UNLESS_BREAK` can only be used at the top level of a loop (`REPT`/`FOR` block) body");
+	}
+
+	// An `UNLESS_BREAK` block is a part of the body it ends, so it is lexed on every iteration;
+	// only assemble it on the loop's last iteration, and only if it was not broken out of
+	if (context.nbReptIters == 0 || context.fileInfo->iters().front() != context.nbReptIters) {
+		return false;
+	}
+
+	// The block is a separate chunk of code, so it gets a unique ID of its own
+	context.uniqueIDStr->clear();
 	return true;
 }
 
