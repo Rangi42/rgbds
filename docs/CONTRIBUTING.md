@@ -217,7 +217,7 @@ RGBGFX will be invoked on the file.
 If a `.flags` file exists, it will be used as part of the RGBGFX invocation
 (<code>@<var>&lt;file&gt;</var>.flags</code>).
 
-If `.out.1bpp`, `.out.2bpp`, `.out.pal`, `.out.tilemap`, `.out.attrmap`, or
+If `.out.1bpp`, `.out.2bpp`, `.out.4bpp`, `.out.pal`, `.out.tilemap`, `.out.attrmap`, or
 `.out.palmap` files exist, RGBGFX will create the corresponding kind of output,
 which must match the file's contents.
 Multiple kinds of output may be tested for the same input.
@@ -229,12 +229,15 @@ match the `.err` file's contents.
 
 #### Reverse tests
 
-Each `.1bpp` or `.2bpp` file corresponds to one test.
+Each `.1bpp`, `.2bpp`, or `.4bpp` file corresponds to one test.
 RGBGFX will be invoked on the file with `-r 1` for reverse mode, then invoked on
 the output without `-r 1`.
 The round-trip output must match the input file's contents.
 If a `.flags` file exists, it will be used as part of the RGBGFX invocation
 (<code>@<var>&lt;file&gt;</var>.flags</code>).
+The bit depth is 2bpp unless the `.flags` file is specific to the bit depth
+(<var>&lt;file&gt;</var>.1bpp.flags or <var>&lt;file&gt;</var>.4bpp.flags),
+in which case `-d 1` or `-d 4` respectively is added to the invocation.
 
 #### Random seed tests
 

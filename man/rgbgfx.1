@@ -41,7 +41,7 @@ The main function of
 .Nm
 is to divide the input PNG into 8\[tmu]8 pixel
 .Em squares ,
-convert each of those squares into 1bpp or 2bpp tile data, and save all of the tile data in a file.
+convert each of those squares into 1bpp, 2bpp, or 4bpp tile data, and save all of the tile data in a file.
 It also has options to generate a tile map, attribute map, and/or palette set as well; more on that and how the conversion process can be tweaked below.
 .Sh ARGUMENTS
 .Nm
@@ -186,8 +186,11 @@ If
 .Ar pal_spec
 is the case-insensitive word
 .Cm embedded ,
-then the first four colors of the input PNG's embedded palette are used.
-It is an error if the PNG is not indexed, or if colors other than these 4 are used.
+then the first
+.Ql 1 << Ar depth
+.Pq see Fl d
+colors of the input PNG's embedded palette are used.
+It is an error if the PNG is not indexed, or if colors other than these are used.
 .Pq This is different from the default behavior of indexed PNGs, as then unused entries in the embedded palette are ignored, whereas they are not with Fl c Cm embedded .
 .It Sy DMG palette spec
 If
@@ -253,8 +256,9 @@ or
 .Ql Lk https://force-color.org/ FORCE_COLOR
 environment variables, or whether the output is to a TTY.
 .It Fl d Ar depth , Fl \-depth Ar depth
-Set the bit depth of the output tile data, in bits per pixel (bpp), either 1 or 2 (the default).
-This changes how tile data is output, and the maximum number of colors per palette (2 and 4 respectively).
+Set the bit depth of the output tile data, in bits per pixel (bpp), either 1, 2 (the default), or 4.
+This changes how tile data is output, and the maximum number of colors per palette (2, 4, and 16 respectively).
+4bpp tile data uses the layout expected by Super Game Boy borders, which is to say that the two least significant bitplanes (16 bytes) come first, then the two most significant ones (16 more bytes).
 .It Fl h , Fl \-help
 Print help text for the program and exit.
 (Help text wraps to the value of the
@@ -270,7 +274,7 @@ image output, and will always get the first IDs in the
 .Fl t
 tilemap output.
 .Ar input_tiles
-must contain 1bpp or 2bpp tile data
+must contain 1bpp, 2bpp, or 4bpp tile data
 .Pq whichever matches the Fl d No option used here ,
 as could be previously generated with the
 .Fl o
@@ -370,7 +374,7 @@ to be the output tile data path from
 instead of the input image path
 .Pq see Sx Automatic output paths .
 .It Fl o Ar out_file , Fl \-output Ar out_file
-Output the tile data in native 2bpp format or in 1bpp
+Output the tile data in native 2bpp format, or in 1bpp or 4bpp
 .Pq depending on Fl d
 to this file.
 .It Fl p Ar pal_file , Fl \-palette Ar pal_file
@@ -674,11 +678,12 @@ For more complete, beginner-friendly descriptions of the native formats with ill
 Tile data is output like a binary dump of VRAM, with no padding between tiles.
 Each tile is 16 bytes, 2 per row of 8 pixels; the bits of color IDs are split into each byte
 .Pq or Dq bitplane .
-The leftmost pixel's color ID is stored in the two bytes' most significant bits, and the rightmost pixel's color ID in their least significant bits.
+The leftmost pixel's color ID is stored in the bytes' most significant bits, and the rightmost pixel's color ID in their least significant bits.
 .Pp
 When the bit depth
 .Pq Fl d
 is set to 1, the most significant bitplane (second byte) of each row, being all zeros, is simply not output.
+When it is set to 4, each tile is output as 32 bytes: the bitplanes 0 and 1 of all 8 rows, then the bitplanes 2 and 3 of all 8 rows.
 .Ss Palette data
 Palette data is output like a dump of palette memory.
 Each color is written as GBC-native little-endian RGB555, with the unused bit 15 set to 0.

@@ -5,6 +5,7 @@
 
 #include <array>
 #include <optional>
+#include <stddef.h>
 #include <stdint.h>
 #include <string>
 #include <vector>
@@ -12,6 +13,11 @@
 #include "helpers.hpp" // assume
 
 #include "gfx/rgba.hpp"
+
+// The largest number of colors that a palette can hold, i.e. that of 4bpp tile data (`-d 4`).
+// Palettes and color sets are sized to this so that they can accommodate any bit depth;
+// shallower depths simply leave the extra slots unused.
+static constexpr size_t MAX_COLORS_PER_PAL = 16;
 
 struct Options {
 	bool useColorCurve = false;   // -C
@@ -30,7 +36,7 @@ struct Options {
 		EMBEDDED,
 		DMG,
 	} palSpecType = NO_SPEC; // -c
-	std::vector<std::array<std::optional<Rgba>, 4>> palSpec{};
+	std::vector<std::array<std::optional<Rgba>, MAX_COLORS_PER_PAL>> palSpec{};
 	uint8_t palSpecDmg = 0;
 	uint8_t bitDepth = 2;       // -d
 	std::string inputTileset{}; // -i
@@ -57,6 +63,9 @@ struct Options {
 
 	mutable bool hasTransparentPixels = false;
 	uint8_t maxOpaqueColors() const { return nbColorsPerPal - hasTransparentPixels; }
+
+	// The maximum number of colors that a palette can hold at the current bit depth
+	uint8_t maxColorsPerPal() const { return 1u << bitDepth; }
 
 	uint16_t maxNbColors() const { return nbColorsPerPal * nbPalettes; }
 

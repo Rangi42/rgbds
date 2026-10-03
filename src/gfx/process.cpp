@@ -510,27 +510,40 @@ static void outputPalettes(std::vector<Palette> const &palettes) {
 	}
 }
 
-static void hashBitplanes(uint16_t bitplanes, uint16_t &hash) {
+static void hashBitplanes(uint32_t bitplanes, uint32_t &hash) {
 	hash ^= bitplanes;
 	if (options.allowMirroringX) {
 		// Count the line itself as mirrored, which ensures the same hash as the tile's horizontal
 		// flip; vertical mirroring is already taken care of because the symmetric line will be
 		// XOR'd the same way. (This can trivially create some collisions, but real-world tile data
 		// generally doesn't trigger them.)
-		hash ^= flipTable[bitplanes >> 8] << 8 | flipTable[bitplanes & 0xFF];
+		hash ^= uint32_t(flipTable[bitplanes >> 24]) << 24
+		      | uint32_t(flipTable[bitplanes >> 16 & 0xFF]) << 16
+		      | uint32_t(flipTable[bitplanes >> 8 & 0xFF]) << 8
+		      | uint32_t(flipTable[bitplanes & 0xFF]);
 	}
 }
 
 class TileData {
-	// Importantly, `TileData` is **always** 2bpp.
-	// If the active bit depth is 1bpp, all tiles are processed as 2bpp nonetheless, but emitted as
-	// 1bpp. This massively simplifies internal processing, since bit depth is always identical
-	// outside of I/O / serialization boundaries.
-	std::array<uint8_t, 16> _data;
+	// Importantly, `TileData` is **always** 4bpp.
+	// If the active bit depth is 1bpp or 2bpp, all tiles are processed as 4bpp nonetheless, but
+	// emitted as 1bpp or 2bpp. This massively simplifies internal processing, since bit depth is
+	// always identical outside of I/O / serialization boundaries.
+	//
+	// The layout is that of 4bpp Game Boy tile data (as used by SGB borders): the bitplane *pairs*
+	// for all 8 rows come first (bitplanes 0 and 1, 16 bytes), then a second such half (bitplanes
+	// 2 and 3, 16 bytes). This is *not* a plain 32-byte-per-tile interleave of 4 bitplanes, so the
+	// row offsets below must account for that.
+public:
+	static constexpr size_t dataSize = 32;
+
+private:
+	std::array<uint8_t, dataSize> _data;
 	// The hash is a bit lax: it's the XOR of all lines, and every other nibble is identical
 	// if horizontal mirroring is in effect. It should still be a reasonable tie-breaker in
 	// non-pathological cases.
-	uint16_t _hash;
+	uint32_t _hash;
+
 public:
 	// This is an index within the "global" pool; no bank info is encoded here
 	// It's marked as `mutable` so that it can be modified even on a `const` object;
@@ -538,43 +551,66 @@ public:
 	// of altering the element's hash, but the tile ID is not part of it.
 	mutable uint16_t tileID;
 
-	static uint16_t
+	// Extracts a row's four bitplanes from raw tile data, as a 32-bit value with bitplane 0 in the
+	// least significant byte, then bitplane 1, then 2, then 3.
+	static uint32_t rowBitplanesFromData(std::array<uint8_t, dataSize> const &data, uint32_t y) {
+		return uint32_t(data[y * 2]) | uint32_t(data[y * 2 + 1]) << 8
+		     | uint32_t(data[y * 2 + 16]) << 16 | uint32_t(data[y * 2 + 17]) << 24;
+	}
+
+	static uint32_t
 	    rowBitplanes(Image::TilesVisitor::Tile const &tile, Palette const &palette, uint32_t y) {
-		uint16_t row = 0;
+		uint32_t row = 0;
 		for (uint32_t x = 0; x < 8; ++x) {
 			row <<= 1;
 			uint8_t index = palette.indexOf(tile.pixel(x, y).cgbColor());
 			assume(index < palette.size()); // The color should be in the palette
-			if (index & 1) {
-				row |= 1;
-			}
-			if (index & 2) {
-				row |= 0x100;
-			}
+			// Each of the index's bits goes into its own byte lane; 8 shifts then move each lane
+			// into place, one bitplane per byte.
+			row |= uint32_t(index & 0b0001) | uint32_t(index & 0b0010) << 7
+			     | uint32_t(index & 0b0100) << 14 | uint32_t(index & 0b1000) << 21;
 		}
 		return row;
 	}
 
-	TileData(std::array<uint8_t, 16> &&raw) : _data(raw), _hash(0) {
+	TileData(std::array<uint8_t, dataSize> &&raw) : _data(raw), _hash(0) {
 		for (uint8_t y = 0; y < 8; ++y) {
-			uint16_t bitplanes = _data[y * 2] | _data[y * 2 + 1] << 8;
-			hashBitplanes(bitplanes, _hash);
+			hashBitplanes(rowBitplanesFromData(_data, y), _hash);
 		}
 	}
 
 	TileData(Image::TilesVisitor::Tile const &tile, Palette const &palette) : _hash(0) {
-		size_t writeIndex = 0;
 		for (uint32_t y = 0; y < 8; ++y) {
-			uint16_t bitplanes = rowBitplanes(tile, palette, y);
+			uint32_t bitplanes = rowBitplanes(tile, palette, y);
 			hashBitplanes(bitplanes, _hash);
 
-			_data[writeIndex++] = bitplanes & 0xFF;
-			_data[writeIndex++] = bitplanes >> 8;
+			_data[y * 2] = bitplanes & 0xFF;      // Bitplane 0, row `y`
+			_data[y * 2 + 1] = bitplanes >> 8;    // Bitplane 1, row `y`
+			_data[y * 2 + 16] = bitplanes >> 16;  // Bitplane 2, row `y`
+			_data[y * 2 + 17] = bitplanes >> 24;  // Bitplane 3, row `y`
 		}
 	}
 
-	std::array<uint8_t, 16> const &data() const { return _data; }
-	uint16_t hash() const { return _hash; }
+	std::array<uint8_t, dataSize> const &data() const { return _data; }
+	uint32_t hash() const { return _hash; }
+
+	// Writes out a tile's worth of bitplanes, in the layout matching the active bit
+	// depth; shallower depths omit the upper bitplanes, which are all zeros for them anyway
+	static void outputTile(File &output, uint32_t const (&bitplanes)[8]) {
+		// 4bpp tile data stores the bitplane *pairs* for all 8 rows first, then a second such half
+		for (uint32_t y = 0; y < 8; ++y) {
+			output->sputc(bitplanes[y] & 0xFF);
+			if (options.bitDepth >= 2) {
+				output->sputc(bitplanes[y] >> 8 & 0xFF);
+			}
+		}
+		if (options.bitDepth == 4) {
+			for (uint32_t y = 0; y < 8; ++y) {
+				output->sputc(bitplanes[y] >> 16 & 0xFF);
+				output->sputc(bitplanes[y] >> 24 & 0xFF);
+			}
+		}
+	}
 
 	enum MatchType {
 		NOPE,
@@ -604,12 +640,14 @@ public:
 		}
 
 		// Check if we have vertical or vertical+horizontal mirroring, for which we have to read
-		// bitplane *pairs*  backwards
+		// bitplane *pairs* backwards
 		bool hasVFlip = true, hasVHFlip = true;
 		for (uint8_t i = 0; i < _data.size(); ++i) {
-			// Flip the bottom bit to get the corresponding row's bitplane 0/1
-			// (This works because the array size is even)
-			uint8_t lhs = _data[i], rhs = other._data[(15 - i) ^ 1];
+			// Vertical mirroring maps each row to the opposite row *within its own half* of the
+			// tile data (each half covers all 8 rows), and flips the bottom bit to get the
+			// corresponding row's other bitplane.
+			// (This works because each half's size is even)
+			uint8_t lhs = _data[i], rhs = other._data[(i & 0xF0) + ((15 - (i & 0x0F)) ^ 1)];
 			if (lhs != rhs) {
 				hasVFlip = false;
 			}
@@ -670,17 +708,15 @@ static void outputUnoptimizedTileData(
 		Palette const &palette = palettes[attr.getPalID(mappings)];
 
 		bool empty = true;
+		uint32_t bitplanes[8];
 		for (uint32_t y = 0; y < 8; ++y) {
-			uint16_t bitplanes = TileData::rowBitplanes(tile, palette, y);
-			if (bitplanes != 0) {
+			bitplanes[y] = TileData::rowBitplanes(tile, palette, y);
+			if (bitplanes[y] != 0) {
 				empty = false;
 			}
-			if (tileIdx < nbKeptTiles) {
-				output->sputc(bitplanes & 0xFF);
-				if (options.bitDepth == 2) {
-					output->sputc(bitplanes >> 8);
-				}
-			}
+		}
+		if (tileIdx < nbKeptTiles) {
+			TileData::outputTile(output, bitplanes);
 		}
 
 		if (!empty && tileIdx >= nbKeptTiles) {
@@ -808,7 +844,7 @@ static UniqueTiles dedupTiles(
 			fatal("Failed to open \"%s\": %s", options.inputTileset.c_str(), strerror(errno));
 		}
 
-		std::array<uint8_t, 16> tile;
+		std::array<uint8_t, TileData::dataSize> tile{};
 		size_t const tileSize = options.bitDepth * 8;
 		for (;;) {
 			// It's okay to cast between character types.
@@ -821,12 +857,17 @@ static UniqueTiles dedupTiles(
 				    options.inputTileset.c_str(),
 				    tileSize
 				);
-			} else if (len == 8) {
-				// Expand the tile data to 2bpp.
-				for (size_t i = 8; i--;) {
-					tile[i * 2 + 1] = 0;
-					tile[i * 2] = tile[i];
+			} else if (tileSize < TileData::dataSize) {
+				// Expand the tile data to 4bpp.
+				// 1bpp and 2bpp tile data is a prefix of the 4bpp layout, so each row's bitplanes
+				// only need widening into pairs; the second half of the tile stays zeroed out.
+				std::array<uint8_t, TileData::dataSize> expanded{};
+				bool const has2Bitplanes = tileSize == 16;
+				for (size_t i = 0; i < 8; ++i) {
+					expanded[i * 2] = tile[has2Bitplanes ? i * 2 : i];
+					expanded[i * 2 + 1] = has2Bitplanes ? tile[i * 2 + 1] : 0;
 				}
+				tile = expanded;
 			}
 
 			auto [tileID, matchType] = tiles.addTile(std::move(tile));
@@ -888,18 +929,15 @@ static void outputTileData(UniqueTiles const &tiles) {
 	for (TileData const *tile : tiles) {
 		assume(tile->tileID == tileIdx);
 		bool empty = true;
+		uint32_t bitplanes[8];
 		for (uint32_t y = 0; y < 8; ++y) {
-			uint8_t bitplane0 = tile->data()[y * 2];
-			uint8_t bitplane1 = tile->data()[y * 2 + 1];
-			if (bitplane0 || bitplane1) {
+			bitplanes[y] = TileData::rowBitplanesFromData(tile->data(), y);
+			if (bitplanes[y] != 0) {
 				empty = false;
 			}
-			if (tileIdx < nbKeptTiles) {
-				output->sputc(bitplane0);
-				if (options.bitDepth == 2) {
-					output->sputc(bitplane1);
-				}
-			}
+		}
+		if (tileIdx < nbKeptTiles) {
+			TileData::outputTile(output, bitplanes);
 		}
 
 		if (!empty && tileIdx >= nbKeptTiles) {

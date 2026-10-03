@@ -12,7 +12,7 @@ shopt -u checkwinsize # Prevent subsequent commands from resetting `COLUMNS`
 errtmp="$(mktemp)"
 
 # shellcheck disable=SC2064 # (Immediate expansion is the desired behavior.)
-trap "rm -f ${errtmp@Q} result.{png,1bpp,2bpp,pal,tilemap,attrmap,palmap} out*.png" EXIT
+trap "rm -f ${errtmp@Q} result.{png,1bpp,2bpp,4bpp,pal,tilemap,attrmap,palmap} out*.png" EXIT
 
 tests=0
 failed=0
@@ -52,7 +52,7 @@ tryCmp () {
 
 checkOutput () {
 	out_rc=0
-	for ext in 1bpp 2bpp pal tilemap attrmap palmap; do
+	for ext in 1bpp 2bpp 4bpp pal tilemap attrmap palmap; do
 		if [[ -e "$1.out.$ext" ]]; then
 			tryCmp "$1.out.$ext" "result.$ext"
 			(( out_rc = out_rc || $? ))
@@ -82,7 +82,7 @@ for f in *.png; do
 	if [[ -e "${f%.png}.flags" ]]; then
 		flags="@${f%.png}.flags"
 	fi
-	for f_ext in o_1bpp o_2bpp p_pal t_tilemap a_attrmap q_palmap; do
+	for f_ext in o_1bpp o_2bpp o_4bpp p_pal t_tilemap a_attrmap q_palmap; do
 		if [[ -e "${f%.png}.out.${f_ext#*_}" ]]; then
 			flags+=" -${f_ext%_*} result.${f_ext#*_}"
 		fi
@@ -111,27 +111,30 @@ for f in *.png; do
 	(( test_rc )) && failTest $test_rc
 done
 
-for f in *.[12]bpp; do
+for f in *.[124]bpp; do
 	# Do not process outputs or sample outputs of other tests as test inputs themselves
 	case "$f" in
-		result.[12]bpp | *.in.[12]bpp | *.out.[12]bpp) continue;;
+		result.[124]bpp | *.in.[124]bpp | *.out.[124]bpp) continue;;
 	esac
 
 	flags=
-	if [[ -e "${f%.[12]bpp}.flags" ]]; then
-		flags="@${f%.[12]bpp}.flags"
-		if [[ -e "${f%.1bpp}.flags" ]]; then
-			flags+=" -d 1"
-		fi
+	if [[ -e "${f%.[124]bpp}.flags" ]]; then
+		flags="@${f%.[124]bpp}.flags"
+		# Only pass `-d 1` if the test is only about 1bpp; the bit depth is otherwise the default
+		[[ -e "${f%.1bpp}.flags" ]] && flags+=" -d 1"
+		# Likewise, only pass `-d 4` if the test is only about 4bpp
+		[[ -e "${f%.4bpp}.flags" ]] && flags+=" -d 4"
 	fi
 
-	if [[ -e "${f%.[12]bpp}.err" ]]; then
+	if [[ -e "${f%.[124]bpp}.err" ]]; then
 		newTest "$RGBGFX $flags -o $f -r 1 result.png"
 		runTest 2>"$errtmp"
-		diff -au --strip-trailing-cr "${f%.[12]bpp}.err" <(sed "s#<stdin>#${f//#/\\#}#g" "$errtmp") || failTest $?
+		diff -au --strip-trailing-cr "${f%.[124]bpp}.err" <(sed "s#<stdin>#${f//#/\\#}#g" "$errtmp") || failTest $?
 	else
-		newTest "$RGBGFX $flags -o $f -r 1 result.png && $RGBGFX $flags -o result.2bpp result.png"
-		runTest && tryCmp "$f" result.2bpp || failTest $?
+		# Round-trip back to tile data of the same bit depth, then compare
+		newTest "$RGBGFX $flags -o $f -r 1 result.png \
+			&& $RGBGFX $flags -o result.${f##*.} result.png"
+		runTest && tryCmp "$f" "result.${f##*.}" || failTest $?
 	fi
 done
 
