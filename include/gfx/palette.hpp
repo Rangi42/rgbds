@@ -7,9 +7,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "gfx/main.hpp" // MAX_COLORS_PER_PAL
+
 struct Palette {
-	// An array of 4 GBC-native (RGB555) colors
-	std::array<uint16_t, 4> colors{UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX};
+	// An array of `MAX_COLORS_PER_PAL` GBC-native (RGB555) colors; how many are actually used
+	// depends on the bit depth (`-d`), the rest being left as UINT16_MAX
+	std::array<uint16_t, MAX_COLORS_PER_PAL> colors{
+	    UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX,
+	    UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX,
+	    UINT16_MAX, UINT16_MAX
+	};
 
 	void addColor(uint16_t color);
 	uint8_t indexOf(uint16_t color) const;

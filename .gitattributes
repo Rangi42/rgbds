@@ -11,6 +11,7 @@
 *.gb binary
 *.1bpp binary
 *.2bpp binary
+*.4bpp binary
 *.pal binary
 *.attrmap binary
 *.tilemap binary

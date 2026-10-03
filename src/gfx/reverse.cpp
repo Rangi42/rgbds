@@ -94,15 +94,14 @@ static void printColor(std::optional<Rgba> const &color) {
 	}
 }
 
-static void printPalette(std::array<std::optional<Rgba>, 4> const &palette) {
+static void printPalette(std::array<std::optional<Rgba>, MAX_COLORS_PER_PAL> const &palette) {
 	putc('[', stderr);
-	printColor(palette[0]);
-	fputs(", ", stderr);
-	printColor(palette[1]);
-	fputs(", ", stderr);
-	printColor(palette[2]);
-	fputs(", ", stderr);
-	printColor(palette[3]);
+	for (uint8_t i = 0; i < options.nbColorsPerPal; ++i) {
+		if (i > 0) {
+			fputs(", ", stderr);
+		}
+		printColor(palette[i]);
+	}
 	putc(']', stderr);
 }
 
@@ -196,12 +195,14 @@ void reverse() {
 
 	verbosePrint(VERB_INFO, "Reversed image dimensions: %zux%zu tiles\n", width, height);
 
-	Rgba const grayColors[4] = {
-	    Rgba(0xFFFFFFFF), Rgba(0xAAAAAAFF), Rgba(0x555555FF), Rgba(0x000000FF)
-	};
-	std::vector<std::array<std::optional<Rgba>, 4>> palettes{
-	    {grayColors[0], grayColors[1], grayColors[2], grayColors[3]}
-	};
+	std::array<std::optional<Rgba>, MAX_COLORS_PER_PAL> grayColors;
+	// Grayscale shades are inverted from RGB PNG; color #0 is the lightest, and the last is black
+	size_t const nbGrays = MAX_COLORS_PER_PAL - 1;
+	for (size_t i = 0; i < MAX_COLORS_PER_PAL; ++i) {
+		uint8_t const shade = i == nbGrays ? 0 : 255 * (nbGrays - i) / nbGrays;
+		grayColors[i] = Rgba(shade, shade, shade, 0xFF);
+	}
+	std::vector<std::array<std::optional<Rgba>, MAX_COLORS_PER_PAL>> palettes{grayColors};
 	// If a palette file or palette spec is used as input, it overrides the default colors.
 	bool grayscale = false;
 	if (!options.palettes.empty()) {
@@ -213,7 +214,7 @@ void reverse() {
 		}
 
 		palettes.clear();
-		std::array<uint8_t, sizeof(uint16_t) * 4> buf; // max 4 colors
+		std::array<uint8_t, sizeof(uint16_t) * MAX_COLORS_PER_PAL> buf; // max 16 colors
 		size_t const palSize = sizeof(uint16_t) * options.nbColorsPerPal;
 		assume(buf.size() >= palSize);
 		for (;;) {
@@ -250,7 +251,9 @@ void reverse() {
 		if (options.hasExplicitPalSpec() && palettes != options.palSpec) {
 			// The explicit `-c` pal spec does not match the input `-p` palette file.
 			// Check whether their 8-to-5-bit-reduced GB colors nevertheless match.
-			std::vector<std::array<std::optional<Rgba>, 4>> palSpecQuantized(options.palSpec);
+			std::vector<std::array<std::optional<Rgba>, MAX_COLORS_PER_PAL>> palSpecQuantized(
+			    options.palSpec
+			);
 			for (auto &pal : palSpecQuantized) {
 				for (auto &color : pal) {
 					if (color.has_value()) {
@@ -278,8 +281,10 @@ void reverse() {
 			}
 		}
 	} else if (options.palSpecType == Options::DMG) {
-		for (size_t i = 0; i < palettes[0].size(); ++i) {
-			palettes[0][i] = grayColors[options.dmgValue(i)];
+		for (size_t i = 0; i < options.nbColorsPerPal; ++i) {
+			// The DMG palette spec only assigns 2-bit shade indices, so they wrap around if a
+			// palette can hold more than 4 colors
+			palettes[0][i] = grayColors[options.dmgValue(i % 4)];
 		}
 		grayscale = true;
 	} else if (options.hasEmbeddedPalSpec()) {
@@ -532,10 +537,11 @@ void reverse() {
 
 	if (pngColorType == PNG_COLOR_TYPE_PALETTE) {
 		assume(palettes.size() == 1);
-		png_color pngPalette[4] = {};
-		png_byte pngTrans[4] = {};
+		png_color pngPalette[MAX_COLORS_PER_PAL] = {};
+		png_byte pngTrans[MAX_COLORS_PER_PAL] = {};
 		int nbPngColors = 0, nbPngTrans = 0;
-		for (auto const &slot : palettes[0]) {
+		for (uint8_t i = 0; i < options.nbColorsPerPal; ++i) {
+			std::optional<Rgba> const &slot = palettes[0][i];
 			Rgba color = slot.has_value() ? *slot : Rgba(255, 255, 255, 255);
 			pngPalette[nbPngColors].red = color.red;
 			pngPalette[nbPngColors].green = color.green;
@@ -589,25 +595,33 @@ void reverse() {
 			assume(palOfs < palettes.size()); // Should be ensured on data read
 
 			// We do not have data for tiles trimmed with `-x`, so assume they are "blank"
-			static std::array<uint8_t, 16> const trimmedTile{0x00};
+			static std::array<uint8_t, 32> const trimmedTile{0x00};
 			uint8_t const *tileData =
 			    tileOfs >= nbTiles ? trimmedTile.data() : &tiles[tileOfs * tileSize];
 			auto const &palette = palettes[palOfs];
+			// 1bpp tile data stores a single bitplane per row; 2bpp stores a bitplane pair.
+			// 4bpp stores two such halves, bitplanes 0 and 1 first, then bitplanes 2 and 3, so
+			// each bitplane pair is indexed within its own half.
+			uint8_t const yFactor = options.bitDepth == 1 ? 1 : 2;
 			for (uint8_t y = 0; y < 8; ++y) {
 				// If vertically mirrored, fetch the bytes from the other end
-				uint8_t realY = (attribute & 0x40 ? 7 - y : y) * options.bitDepth;
+				uint8_t realY = (attribute & 0x40 ? 7 - y : y) * yFactor;
 				uint8_t bitplane0 = tileData[realY];
-				uint8_t bitplane1 = options.bitDepth == 2 ? tileData[realY + 1] : 0;
+				uint8_t bitplane1 = options.bitDepth >= 2 ? tileData[realY + 1] : 0;
+				uint8_t bitplane2 = options.bitDepth == 4 ? tileData[16 + realY] : 0;
+				uint8_t bitplane3 = options.bitDepth == 4 ? tileData[16 + realY + 1] : 0;
 				if (attribute & 0x20) { // Handle horizontal flip
 					bitplane0 = flipTable[bitplane0];
 					bitplane1 = flipTable[bitplane1];
+					bitplane2 = flipTable[bitplane2];
+					bitplane3 = flipTable[bitplane3];
 				}
 
 				uint8_t *ptr = &rowPtrs[y][tx * bytesPerTileRow];
-				uint16_t gray = 0;
+				uint32_t gray = 0;
 				for (uint8_t x = 0; x < 8; ++x) {
-					uint8_t bit0 = bitplane0 & 0x80, bit1 = bitplane1 & 0x80;
-					uint8_t colorID = bit0 >> 7 | bit1 >> 6;
+					uint8_t colorID = bitplane0 >> 7 | (bitplane1 >> 7) << 1
+					                 | (bitplane2 >> 7) << 2 | (bitplane3 >> 7) << 3;
 
 					std::optional<Rgba> const &color = palette[colorID];
 					// Unlike most of the inconsistency checks above, this one is simpler to handle
@@ -640,11 +654,18 @@ void reverse() {
 					// Shift the pixel out
 					bitplane0 <<= 1;
 					bitplane1 <<= 1;
+					bitplane2 <<= 1;
+					bitplane3 <<= 1;
 				}
 
 				if (pngDepth == 1) {
 					*ptr = gray;
 				} else if (pngDepth == 2) {
+					*ptr++ = gray >> 8;
+					*ptr = gray & 0xff;
+				} else if (pngDepth == 4) {
+					*ptr++ = gray >> 24;
+					*ptr++ = gray >> 16;
 					*ptr++ = gray >> 8;
 					*ptr = gray & 0xff;
 				}

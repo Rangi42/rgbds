@@ -221,8 +221,8 @@ static void parseArg(int ch, char *arg) {
 		options.bitDepth = readNumber(argPtr, "Bit depth", 2);
 		if (*argPtr != '\0') {
 			error("Bit depth ('-d') argument must be a valid number, not \"%s\"", arg);
-		} else if (options.bitDepth != 1 && options.bitDepth != 2) {
-			error("Bit depth must be 1 or 2, not %" PRIu8, options.bitDepth);
+		} else if (options.bitDepth != 1 && options.bitDepth != 2 && options.bitDepth != 4) {
+			error("Bit depth must be 1, 2, or 4, not %" PRIu8, options.bitDepth);
 			options.bitDepth = 2;
 		}
 		break;
@@ -394,8 +394,10 @@ static void parseArg(int ch, char *arg) {
 		if (*argPtr != '\0') {
 			error("Palette size ('-s') must be a valid number, not \"%s\"", arg);
 		}
-		if (options.nbColorsPerPal > 4) {
-			error("Palette size ('-s') must not exceed 4");
+		// The actual maximum depends on `-d`, which may only be specified later on the command
+		// line; `main` performs that (depth-dependent) check once all options have been parsed.
+		if (options.nbColorsPerPal > MAX_COLORS_PER_PAL) {
+			error("Palette size ('-s') must not exceed %zu", MAX_COLORS_PER_PAL);
 		} else if (options.nbColorsPerPal == 0) {
 			error("Palette size ('-s') may not be 0");
 		}
@@ -643,12 +645,12 @@ int main(int argc, char *argv[]) {
 	cli_ParseArgs(argc, argv, optstring, longopts, parseArg, usage);
 
 	if (options.nbColorsPerPal == 0) {
-		options.nbColorsPerPal = 1u << options.bitDepth;
-	} else if (options.nbColorsPerPal > 1u << options.bitDepth) {
+		options.nbColorsPerPal = options.maxColorsPerPal();
+	} else if (options.nbColorsPerPal > options.maxColorsPerPal()) {
 		error(
 		    "%" PRIu8 "bpp palettes can only contain %u colors, not %" PRIu8,
 		    options.bitDepth,
-		    1u << options.bitDepth,
+		    options.maxColorsPerPal(),
 		    options.nbColorsPerPal
 		);
 	}
@@ -690,7 +692,7 @@ int main(int argc, char *argv[]) {
 
 	// Execute deferred pal spec parsing, now that all other params are known.
 	// Do not parse pal specs if `options.nbColorsPerPal` is invalid.
-	if (options.nbColorsPerPal > 0 && options.nbColorsPerPal <= 4) {
+	if (options.nbColorsPerPal > 0 && options.nbColorsPerPal <= MAX_COLORS_PER_PAL) {
 		switch (options.palSpecType) {
 		case Options::NO_SPEC:
 			assume(!localOptions.palSpec);

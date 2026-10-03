@@ -7,15 +7,21 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "gfx/main.hpp" // MAX_COLORS_PER_PAL
+
 class ColorSet {
 public:
-	static constexpr size_t capacity = 4;
+	static constexpr size_t capacity = MAX_COLORS_PER_PAL;
 
 private:
-	// Up to 4 colors, sorted, and where UINT16_MAX means the slot is empty
+	// Up to `capacity` colors, sorted, and where UINT16_MAX means the slot is empty
 	// (OK because it's not a valid color index)
 	// Sorting is done on the raw numerical values to lessen `compare`'s complexity
-	std::array<uint16_t, capacity> _colorIndices{UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX};
+	std::array<uint16_t, capacity> _colorIndices{
+	    UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX,
+	    UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX,
+	    UINT16_MAX, UINT16_MAX
+	};
 
 public:
 	// Adds the specified color to the set, or **silently drops it** if the set is full.
