@@ -195,13 +195,20 @@ static void mergeSections(Section &target, std::unique_ptr<Section> &&other) {
 }
 
 void sect_AddSection(std::unique_ptr<Section> &&section) {
+	// Anonymous sections have no name, so they can never be merged with any other section,
+	// not even with each other; they also stay out of the name lookup table.
+	if (section->isAnon) {
+		sections.addAnonymous() = std::move(section);
+		return;
+	}
+
 	// Check if the section already exists; if not, add it
 	if (Section *target = sect_GetSection(section->name); target) {
 		mergeSections(*target, std::move(section));
 	} else if (section->modifier == SECTION_UNION && sectTypeHasData(section->type)) {
 		fatal(
 		    "Section \"%s\" is of type `%s`, which cannot be `UNION`ized",
-		    section->name.c_str(),
+		    section->displayName(),
 		    section->typeInfo().name
 		);
 	} else {
@@ -220,7 +227,7 @@ static void doSanityChecks(Section &section) {
 		// This is trapped early in RGBDS objects (because then the format is not parseable),
 		// which leaves SDAS objects.
 		error(
-		    "Section \"%s\" has not been assigned a type by a linker script", section.name.c_str()
+		    "Section \"%s\" has not been assigned a type by a linker script", section.displayName()
 		);
 		return;
 	}
@@ -230,7 +237,7 @@ static void doSanityChecks(Section &section) {
 		if (section.isBankFixed && section.bank != 1) {
 			error(
 			    "Section \"%s\" has type `ROMX`, which must be in bank 1 (if any) with option '-t'",
-			    section.name.c_str()
+			    section.displayName()
 			);
 			bankModeError = true;
 		} else {
@@ -243,7 +250,7 @@ static void doSanityChecks(Section &section) {
 			error(
 			    "Section \"%s\" has type `WRAMX`, which must be in bank 1 with options '-w' or "
 			    "'-d'",
-			    section.name.c_str()
+			    section.displayName()
 			);
 			bankModeError = true;
 		} else {
@@ -255,7 +262,7 @@ static void doSanityChecks(Section &section) {
 	    && section.bank != 0) {
 		error(
 		    "Section \"%s\" has type `VRAM`, which must be in bank 0 with option '-d'",
-		    section.name.c_str()
+		    section.displayName()
 		);
 		bankModeError = true;
 	}
@@ -273,7 +280,7 @@ static void doSanityChecks(Section &section) {
 	if (section.isAlignFixed && (section.alignMask & typeInfo.startAddr) > section.alignOfs) {
 		error(
 		    "Section \"%s\" has type `%s`, which cannot be aligned to $%04x bytes",
-		    section.name.c_str(),
+		    section.displayName(),
 		    typeInfo.name,
 		    section.alignMask + 1
 		);
@@ -288,7 +295,7 @@ static void doSanityChecks(Section &section) {
 		        ? "Cannot place section \"%s\" in bank %" PRIu32 ", it must be %" PRIu32
 		        : "Cannot place section \"%s\" in bank %" PRIu32 ", it must be between %" PRIu32
 		          " and %" PRIu32,
-		    section.name.c_str(),
+		    section.displayName(),
 		    section.bank,
 		    minbank,
 		    maxbank
@@ -299,7 +306,7 @@ static void doSanityChecks(Section &section) {
 	if (section.size > typeInfo.size) {
 		error(
 		    "Section \"%s\" is bigger than the max size for that type: $%" PRIx16 " > $%" PRIx16,
-		    section.name.c_str(),
+		    section.displayName(),
 		    section.size,
 		    typeInfo.size
 		);
@@ -318,7 +325,7 @@ static void doSanityChecks(Section &section) {
 			if ((section.org & section.alignMask) != section.alignOfs) {
 				error(
 				    "Section \"%s\"'s fixed address does not match its alignment",
-				    section.name.c_str()
+				    section.displayName()
 				);
 			}
 			section.isAlignFixed = false;
@@ -329,7 +336,7 @@ static void doSanityChecks(Section &section) {
 			error(
 			    "Section \"%s\"'s fixed address $%04" PRIx16 " is outside of range [$%04" PRIx16
 			    "; $%04" PRIx16 "]",
-			    section.name.c_str(),
+			    section.displayName(),
 			    section.org,
 			    typeInfo.startAddr,
 			    typeInfo.endAddr()
@@ -337,7 +344,7 @@ static void doSanityChecks(Section &section) {
 		} else if (section.org + section.size > typeInfo.endAddr() + 1) {
 			error(
 			    "Section \"%s\"'s end address $%04x is greater than last address $%04x",
-			    section.name.c_str(),
+			    section.displayName(),
 			    section.org + section.size,
 			    typeInfo.endAddr() + 1
 			);

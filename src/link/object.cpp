@@ -249,6 +249,7 @@ static void readSection(
 		section.type = SectionType(type);
 	}
 
+	section.isAnon = byte & (1 << SECTTYPE_ANONYMOUS_BIT);
 	if (byte & (1 << SECTTYPE_UNION_BIT)) {
 		section.modifier = SECTION_UNION;
 	} else if (byte & (1 << SECTTYPE_FRAGMENT_BIT)) {
@@ -256,27 +257,31 @@ static void readSection(
 	} else {
 		section.modifier = SECTION_NORMAL;
 	}
-	tryReadLong(tmp, file, "%s: Cannot read \"%s\"'s org: %s", fileName, section.name.c_str());
+	if (section.isAnon && section.modifier != SECTION_NORMAL) {
+		// An anonymous section has no name, so it cannot be merged with any other section
+		fatal("%s: Anonymous section cannot be `UNION` or `FRAGMENT`", fileName);
+	}
+	tryReadLong(tmp, file, "%s: Cannot read \"%s\"'s org: %s", fileName, section.displayName());
 	section.isAddressFixed = tmp >= 0;
 	if (tmp > UINT16_MAX) {
-		error("\"%s\"'s org is too large ($%" PRIx32 ")", section.name.c_str(), tmp);
+		error("\"%s\"'s org is too large ($%" PRIx32 ")", section.displayName(), tmp);
 		tmp = UINT16_MAX;
 	}
 	section.org = tmp;
-	tryReadLong(tmp, file, "%s: Cannot read \"%s\"'s bank: %s", fileName, section.name.c_str());
+	tryReadLong(tmp, file, "%s: Cannot read \"%s\"'s bank: %s", fileName, section.displayName());
 	section.isBankFixed = tmp >= 0;
 	section.bank = tmp;
-	tryGetc(byte, file, "%s: Cannot read \"%s\"'s alignment: %s", fileName, section.name.c_str());
+	tryGetc(byte, file, "%s: Cannot read \"%s\"'s alignment: %s", fileName, section.displayName());
 	if (byte > 16) {
 		byte = 16;
 	}
 	section.isAlignFixed = byte != 0;
 	section.alignMask = (1 << byte) - 1;
 	tryReadLong(
-	    tmp, file, "%s: Cannot read \"%s\"'s alignment offset: %s", fileName, section.name.c_str()
+	    tmp, file, "%s: Cannot read \"%s\"'s alignment offset: %s", fileName, section.displayName()
 	);
 	if (tmp > UINT16_MAX) {
-		error("\"%s\"'s alignment offset is too large ($%" PRIx32 ")", section.name.c_str(), tmp);
+		error("\"%s\"'s alignment offset is too large ($%" PRIx32 ")", section.displayName(), tmp);
 		tmp = UINT16_MAX;
 	}
 	section.alignOfs = tmp;
@@ -291,7 +296,7 @@ static void readSection(
 			fatal(
 			    "%s: Cannot read \"%s\"'s data: %s",
 			    fileName,
-			    section.name.c_str(),
+			    section.displayName(),
 			    feof(file) ? "Unexpected end of file" : strerror(errno)
 			);
 		}
@@ -303,7 +308,7 @@ static void readSection(
 	    file,
 	    "%s: Cannot read \"%s\"'s number of patches: %s",
 	    fileName,
-	    section.name.c_str()
+	    section.displayName()
 	);
 
 	section.patches.resize(nbPatches);
@@ -315,14 +320,14 @@ static void readSection(
 		    file,
 		    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s node ID: %s",
 		    fileName,
-		    section.name.c_str(),
+		    section.displayName(),
 		    patchID
 		);
 		if (nodeID >= fileNodes.size()) {
 			fatal(
 			    "%s: \"%s\"'s patch #%" PRIu32 " has invalid node ID #%" PRIu32,
 			    fileName,
-			    section.name.c_str(),
+			    section.displayName(),
 			    patchID,
 			    nodeID
 			);
@@ -334,7 +339,7 @@ static void readSection(
 		    file,
 		    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s line number: %s",
 		    fileName,
-		    section.name.c_str(),
+		    section.displayName(),
 		    patchID
 		);
 		tryReadLong(
@@ -342,7 +347,7 @@ static void readSection(
 		    file,
 		    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s offset: %s",
 		    fileName,
-		    section.name.c_str(),
+		    section.displayName(),
 		    patchID
 		);
 		tryReadLong(
@@ -350,7 +355,7 @@ static void readSection(
 		    file,
 		    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s PC offset: %s",
 		    fileName,
-		    section.name.c_str(),
+		    section.displayName(),
 		    patchID
 		);
 		tryReadLong(
@@ -358,7 +363,7 @@ static void readSection(
 		    file,
 		    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s PC offset: %s",
 		    fileName,
-		    section.name.c_str(),
+		    section.displayName(),
 		    patchID
 		);
 
@@ -368,14 +373,14 @@ static void readSection(
 		    file,
 		    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s type: %s",
 		    fileName,
-		    section.name.c_str(),
+		    section.displayName(),
 		    patchID
 		);
 		if (type >= PATCHTYPE_INVALID) {
 			fatal(
 			    "%s: \"%s\"'s patch #%" PRIu32 " has unknown type 0x%02x",
 			    fileName,
-			    section.name.c_str(),
+			    section.displayName(),
 			    patchID,
 			    type
 			);
@@ -389,7 +394,7 @@ static void readSection(
 		    file,
 		    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s RPN size: %s",
 		    fileName,
-		    section.name.c_str(),
+		    section.displayName(),
 		    patchID
 		);
 
@@ -398,7 +403,7 @@ static void readSection(
 			fatal(
 			    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s RPN expression: %s",
 			    fileName,
-			    section.name.c_str(),
+			    section.displayName(),
 			    patchID,
 			    feof(file) ? "Unexpected end of file" : strerror(errno)
 			);
@@ -641,7 +646,7 @@ void obj_ReadFile(std::string const &filePath, size_t fileID) {
 				fatal(
 				    "%s: \"%s\"'s patch #%zu has invalid section ID #%" PRIu32,
 				    fileName,
-				    sect->name.c_str(),
+				    sect->displayName(),
 				    i,
 				    rpn.pcSectionID
 				);

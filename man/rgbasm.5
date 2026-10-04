@@ -810,11 +810,23 @@ This tells the assembler what kind of information follows and where to put it.
 .Dl SECTION Ar name , type , options
 .Dl SECTION Ar name , type Ns Bo Ar addr Bc
 .Dl SECTION Ar name , type Ns Bo Ar addr Bc , Ar options
+.Dl SECTION Ar type
+.Dl SECTION Ar type , options
+.Dl SECTION Ar type Ns Bo Ar addr Bc
+.Dl SECTION Ar type Ns Bo Ar addr Bc , Ar options
 .Pp
 .Ar name
 is a string enclosed in double quotes, which is the name of the section.
 If the type doesn't match, an error occurs.
 Each section must have a unique name, even across different source files, or the linker will treat it as an error.
+.Pp
+.Ar name
+may be omitted, which declares an
+.Dq anonymous
+section;
+see
+.Sx Anonymous sections
+below.
 .Pp
 Possible section
 .Ar type Ns s
@@ -1065,7 +1077,8 @@ A
 .Ic LOAD
 block feels similar to a
 .Ic SECTION
-declaration because it creates a new one.
+declaration because it creates a new one, and it accepts the same arguments, including leaving out the name to declare an
+.Sx Anonymous section .
 All data and code generated within such a block is placed in the current section like usual, but all labels are created as if they were placed in this newly-created section.
 .Pp
 In the example above, all of the code and data will end up in the
@@ -1310,6 +1323,103 @@ dw [[
     ]]
 ]]
 .Ed
+.Ss Anonymous sections
+A section's
+.Ar name
+is optional.
+Omitting it declares an
+.Dq anonymous
+section, which works exactly like a named one, except that it cannot be referred to by name.
+.Bd -literal -offset indent
+SECTION ROMX, BANK[3]
+    db $01, $02, $03
+SECTION ROMX, BANK[3]
+    db $04, $05
+.Ed
+.Pp
+The two sections above are entirely distinct: they are not merged, even though they have the same type and the same bank, and even if they come from different object files.
+This makes anonymous sections a convenient way to emit a blob of data without having to come up with a name for it.
+Note that a section whose
+.Ar name
+is an empty string is
+.Em not
+anonymous; it is a normal section whose name happens to be empty, and it is therefore still unique and still mergeable like any other.
+.Pp
+Anonymous sections follow some rules:
+.Bl -bullet -offset indent
+.It
+They cannot be unionized or fragmentized, as described in
+.Sx Unionized sections
+and
+.Sx Section fragments ;
+declaring
+.Ic SECTION UNION
+or
+.Ic SECTION FRAGMENT
+without a
+.Ar name
+is an error.
+.It
+For the same reason, they cannot contain
+.Sx Fragment literals .
+.It
+They cannot be referred to by name, so
+.Ic BANK ,
+.Ic SIZEOF ,
+.Ic STARTOF ,
+and linker scripts cannot mention them.
+.El
+.Pp
+.Ic LOAD
+blocks and
+.Ic PUSHS
+can declare anonymous sections too, just like they can declare named ones:
+.Bd -literal -offset indent
+SECTION "Copy routine", ROM0
+CopyCode:
+    ld de, RAMCode
+    ld hl, RAMLocation
+    ld c, RAMCode.end - RAMCode
+\&.loop
+    ld a, [hli]
+    ld [de], a
+    dec c
+    jr nz, .loop
+    ret
+
+RAMCode:
+  LOAD WRAM0
+RAMLocation:
+    ld hl, .string
+    ld de, $9864
+\&.copy
+    ld a, [hli]
+    ld [de], a
+    dec c
+    jr nz, .copy
+    ret
+
+\&.string
+    db "Hello World!\e0"
+  ENDL
+\&.end
+.Ed
+.Pp
+Here,
+.Sq RAMLocation
+and
+.Sq .string
+are defined in an anonymous
+.Ic LOAD
+section, so their labels belong to it, but all of the code and data they generate end up in the
+.Dq Copy routine
+section, like usual.
+.Ic PUSHS
+behaves similarly: giving it the same arguments as
+.Ic SECTION
+without a
+.Ar name
+pushes the current section context and declares an anonymous section at the same time.
 .Sh SYMBOLS
 RGBDS supports several types of symbols:
 .Bl -hang

@@ -576,7 +576,7 @@ static void checkSignedPatchSize(Expression const &expr, int32_t v, uint8_t n) {
 
 // Applies all of a section's patches to a data section
 static void applyFilePatches(Section &section, Section &dataSection) {
-	verbosePrint(VERB_INFO, "Patching section \"%s\"...\n", section.name.c_str());
+	verbosePrint(VERB_INFO, "Patching section \"%s\"...\n", section.displayName());
 	for (Patch &patch : section.patches) {
 		int32_t value = computeRPNExpr(patch.rpn, *section.fileSymbols);
 		uint32_t offset = patch.offset + section.offset;
@@ -595,7 +595,7 @@ static void applyFilePatches(Section &section, Section &dataSection) {
 			    patch.rpn,
 			    "Patch would write %zu bytes past the end of section \"%s\" (%zu bytes long)",
 			    offset + typeSize - dataSection.data.size(),
-			    dataSection.name.c_str(),
+			    dataSection.displayName(),
 			    dataSection.data.size()
 			);
 		} else if (patch.type == PATCHTYPE_JR) {

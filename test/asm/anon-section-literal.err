@@ -1,0 +1,2 @@
+FATAL: Anonymous sections cannot contain fragment literals
+    at anon-section-literal.asm(2)

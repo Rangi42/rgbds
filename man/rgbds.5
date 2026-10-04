@@ -172,6 +172,12 @@ Bit\ 7 being set means that the section is a "union"
 Bit\ 6 being set means that the section is a "fragment"
 .Pq see Do Section fragments Dc in Xr rgbasm 5 .
 These two bits are mutually exclusive.
+.Pp
+Bit\ 5 being set means that the section is "anonymous"
+.Pq see Do Anonymous sections Dc in Xr rgbasm 5 ,
+that is, that it was declared without a
+.Ar Name .
+Anonymous sections are never merged with any other section, so they must not have either of the above two bits set.
 .It Cm LONG Ar Address
 Address this section must be placed at.
 This must either be valid for the section's

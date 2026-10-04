@@ -800,8 +800,11 @@ shift_const:
 ;
 
 load:
-	POP_LOAD sect_mod string COMMA sect_type sect_org sect_attrs {
+	  POP_LOAD sect_mod string COMMA sect_type sect_org sect_attrs {
 		sect_SetLoadSection($3, $5, $6, $7, $2);
+	}
+	| POP_LOAD sect_mod sect_type sect_org sect_attrs {
+		sect_SetLoadSection(std::nullopt, $3, $4, $5, $2);
 	}
 	| POP_ENDL {
 		sect_EndLoadSection(nullptr);
@@ -1709,15 +1712,22 @@ strfmt_va_args:
 ;
 
 section:
-	POP_SECTION sect_mod string COMMA sect_type sect_org sect_attrs {
+	  POP_SECTION sect_mod string COMMA sect_type sect_org sect_attrs {
 		sect_NewSection($3, $5, $6, $7, $2);
+	}
+	| POP_SECTION sect_mod sect_type sect_org sect_attrs {
+		sect_NewSection(std::nullopt, $3, $4, $5, $2);
 	}
 ;
 
 pushs_section:
-	POP_PUSHS sect_mod string COMMA sect_type sect_org sect_attrs {
+	  POP_PUSHS sect_mod string COMMA sect_type sect_org sect_attrs {
 		sect_PushSection();
 		sect_NewSection($3, $5, $6, $7, $2);
+	}
+	| POP_PUSHS sect_mod sect_type sect_org sect_attrs {
+		sect_PushSection();
+		sect_NewSection(std::nullopt, $3, $4, $5, $2);
 	}
 ;
 

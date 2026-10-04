@@ -1,0 +1,4 @@
+SECTION "Main", ROM0
+	LOAD UNION WRAM0
+	ds 2
+	ENDL

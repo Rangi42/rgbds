@@ -32,11 +32,14 @@ struct Patch {
 
 struct Section {
 	// Info contained in the object files
-	std::string name;
+	std::string name; // Empty if `isAnon`
 	uint16_t size;
 	uint16_t offset;
 	SectionType type;
 	SectionModifier modifier;
+	// Anonymous sections have no name, so they are never merged with each other,
+	// and they cannot be referred to (nor placed) by name.
+	bool isAnon = false;
 	bool isAddressFixed;
 	// This `struct`'s address in ROM.
 	// Importantly for fragments, this does not include `offset`!
@@ -56,6 +59,9 @@ struct Section {
 	std::unique_ptr<Section> nextPiece; // The next fragment or union "piece" of this section
 
 	SectionTypeInfo const &typeInfo() const { return sectionTypeInfo[type]; }
+
+	// How to refer to this section in diagnostics; anonymous sections have no name to show
+	char const *displayName() const { return isAnon ? "<unnamed>" : name.c_str(); }
 
 private:
 	// Template class for both const and non-const iterators over the "pieces" of this section

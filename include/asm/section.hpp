@@ -29,9 +29,12 @@ struct Patch {
 };
 
 struct Section {
-	std::string name;
+	std::string name; // Empty if `isAnon`
 	SectionType type;
 	SectionModifier modifier;
+	// Anonymous sections are declared without a name, and can never be merged with each other
+	// nor looked up by name; they are written out with an empty name plus a dedicated bit.
+	bool isAnon = false;
 	std::shared_ptr<FileStackNode> src; // Where the section was defined
 	uint32_t fileLine;                  // Line where the section was defined
 	uint32_t size;
@@ -44,6 +47,9 @@ struct Section {
 	uint32_t cyclesCounter; // `__CYCLES__` value; unsigned for well-defined overflow on increment
 
 	SectionTypeInfo const &typeInfo() const { return sectionTypeInfo[type]; }
+
+	// How to refer to this section in diagnostics; anonymous sections have no name to show
+	char const *displayName() const { return isAnon ? "<unnamed>" : name.c_str(); }
 
 	uint32_t getID() const; // ID of the section in the object file (`UINT32_MAX` if none)
 	bool isSizeKnown() const;
@@ -59,15 +65,17 @@ size_t sect_CountSections();
 void sect_ForEach(void (*callback)(Section &));
 
 Section *sect_FindSectionByName(std::string const &name);
+// An unset `name` creates an anonymous section
 void sect_NewSection(
-    std::string const &name,
+    std::optional<std::string> const &name,
     SectionType type,
     uint32_t org,
     SectionSpec const &attrs,
     SectionModifier mod
 );
+// An unset `name` creates an anonymous section
 void sect_SetLoadSection(
-    std::string const &name,
+    std::optional<std::string> const &name,
     SectionType type,
     uint32_t org,
     SectionSpec const &attrs,

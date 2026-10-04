@@ -84,7 +84,11 @@ static void writeSection(Section const &sect, FILE *file) {
 	assume((sect.type & SECTTYPE_TYPE_MASK) == sect.type);
 	bool isUnion = sect.modifier == SECTION_UNION;
 	bool isFragment = sect.modifier == SECTION_FRAGMENT;
-	putc(sect.type | isUnion << SECTTYPE_UNION_BIT | isFragment << SECTTYPE_FRAGMENT_BIT, file);
+	putc(
+	    sect.type | isUnion << SECTTYPE_UNION_BIT | isFragment << SECTTYPE_FRAGMENT_BIT
+	        | sect.isAnon << SECTTYPE_ANONYMOUS_BIT,
+	    file
+	);
 
 	putLong(sect.org, file);
 	putLong(sect.bank, file);

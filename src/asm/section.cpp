@@ -85,7 +85,7 @@ static bool requireCodeSection() {
 
 	error(
 	    "Section \"%s\" cannot contain code or data (not `ROM0` or `ROMX`)",
-	    currentSection->name.c_str()
+	    currentSection->displayName()
 	);
 	return false;
 }
@@ -106,7 +106,7 @@ void sect_CheckSizes() {
 			error(
 			    "Section \"%s\" grew too big (max size = 0x%" PRIX32 " bytes, reached 0x%" PRIX32
 			    ")",
-			    sect.name.c_str(),
+			    sect.displayName(),
 			    maxSize,
 			    sect.size
 			);
@@ -354,7 +354,7 @@ static void mergeSections(
 }
 
 static Section *createSection(
-    std::string const &name,
+    std::optional<std::string> const &name,
     SectionType type,
     uint32_t org,
     uint32_t bank,
@@ -362,10 +362,12 @@ static Section *createSection(
     uint16_t alignOffset,
     SectionModifier mod
 ) {
-	// Add the new section to the list
-	Section &sect = sections.add(name);
+	// Add the new section to the list; anonymous ones are left out of the name lookup table,
+	// so that they can never be found (nor merged with another section) by name.
+	Section &sect = name ? sections.add(*name) : sections.addAnonymous();
 
-	sect.name = name;
+	sect.isAnon = !name;
+	sect.name = name ? *name : "";
 	sect.type = type;
 	sect.modifier = mod;
 	sect.src = fstk_GetFileStack();
@@ -391,6 +393,7 @@ static Section *createSectionFragmentLiteral(Section const &parent) {
 	assume(sections.contains(parent.name));
 	Section &sect = sections.addAnonymous();
 
+	sect.isAnon = parent.isAnon;
 	sect.name = parent.name;
 	sect.type = parent.type;
 	sect.modifier = SECTION_FRAGMENT;
@@ -413,7 +416,7 @@ static Section *createSectionFragmentLiteral(Section const &parent) {
 }
 
 static Section *getSection(
-    std::string const &name,
+    std::optional<std::string> const &name,
     SectionType type,
     uint32_t org,
     SectionSpec const &attrs,
@@ -422,6 +425,8 @@ static Section *getSection(
 	uint32_t bank = attrs.bank;
 	uint8_t alignment = attrs.alignment;
 	uint16_t alignOffset = attrs.alignOfs;
+	// Anonymous sections have no name to report in diagnostics
+	char const *sectName = name ? name->c_str() : "<unnamed>";
 
 	assume(alignment <= 16); // Should be ensured by the caller
 	uint32_t alignSize = 1u << alignment;
@@ -465,7 +470,7 @@ static Section *getSection(
 			error(
 			    "Section \"%s\"'s fixed address $%04" PRIx32 " is outside of range [$%04" PRIx16
 			    "; $%04" PRIx16 "]",
-			    name.c_str(),
+			    sectName,
 			    org,
 			    typeInfo.startAddr,
 			    typeInfo.endAddr()
@@ -477,13 +482,11 @@ static Section *getSection(
 		// It doesn't make sense to have both alignment and org set
 		if (org != UINT32_MAX) {
 			if ((org & alignMask) != alignOffset) {
-				error("Section \"%s\"'s fixed address does not match its alignment", name.c_str());
+				error("Section \"%s\"'s fixed address does not match its alignment", sectName);
 			}
 			alignment = 0; // Ignore it if it's satisfied
 		} else if ((typeInfo.startAddr & alignMask) > alignOffset) {
-			error(
-			    "Section \"%s\"'s alignment cannot be attained in %s", name.c_str(), typeInfo.name
-			);
+			error("Section \"%s\"'s alignment cannot be attained in %s", sectName, typeInfo.name);
 			alignment = 0; // Ignore it if it's unattainable
 		} else if (alignment == 16) {
 			// Treat an alignment of 16 as fixing the address.
@@ -494,8 +497,9 @@ static Section *getSection(
 	}
 
 	// Check if another section exists with the same name; merge if yes, otherwise create one
+	// (anonymous sections always create a new section, as they are never looked up by name)
 
-	Section *sect = sect_FindSectionByName(name);
+	Section *sect = name ? sect_FindSectionByName(*name) : nullptr;
 
 	if (sect) {
 		mergeSections(*sect, type, org, bank, alignment, alignOffset, mod);
@@ -535,9 +539,10 @@ bool Section::isSizeKnown() const {
 		return false;
 	}
 
-	// Any section on the stack is still growing
+	// Any section on the stack is still growing.
+	// Anonymous sections are never merged, so they are only ever "on the stack" as themselves.
 	for (SectionStackEntry &entry : sectionStack) {
-		if (entry.section && entry.section->name == name) {
+		if (entry.section && (entry.section == this || (!isAnon && entry.section->name == name))) {
 			return false;
 		}
 	}
@@ -546,20 +551,25 @@ bool Section::isSizeKnown() const {
 }
 
 void sect_NewSection(
-    std::string const &name,
+    std::optional<std::string> const &name,
     SectionType type,
     uint32_t org,
     SectionSpec const &attrs,
     SectionModifier mod
 ) {
-	if (name.find('\0') != std::string::npos) {
-		fatal("Section names cannot contain '\\0' characters");
-	}
-
-	for (SectionStackEntry &entry : sectionStack) {
-		if (entry.section && entry.section->name == name) {
-			fatal("Section \"%s\" is already on the stack", name.c_str());
+	if (name) {
+		if (name->find('\0') != std::string::npos) {
+			fatal("Section names cannot contain '\\0' characters");
 		}
+
+		for (SectionStackEntry &entry : sectionStack) {
+			if (entry.section && entry.section->name == *name) {
+				fatal("Section \"%s\" is already on the stack", name->c_str());
+			}
+		}
+	} else if (mod != SECTION_NORMAL) {
+		error("Anonymous sections cannot be `UNION` or `FRAGMENT`");
+		return;
 	}
 
 	if (mod == SECTION_UNION && sectTypeHasData(type)) {
@@ -580,7 +590,7 @@ void sect_NewSection(
 }
 
 void sect_SetLoadSection(
-    std::string const &name,
+    std::optional<std::string> const &name,
     SectionType type,
     uint32_t org,
     SectionSpec const &attrs,
@@ -597,6 +607,11 @@ void sect_SetLoadSection(
 
 	if (sectTypeHasData(type)) {
 		error("`LOAD` blocks cannot create a ROM section");
+		return;
+	}
+
+	if (!name && mod != SECTION_NORMAL) {
+		error("Anonymous sections cannot be `UNION` or `FRAGMENT`");
 		return;
 	}
 
@@ -1180,8 +1195,13 @@ InternedStr sect_PushSectionFragmentLiteral() {
 	if (!sectTypeHasData(currentSection->type)) {
 		fatal(
 		    "Section \"%s\" cannot contain fragment literals (not `ROM0` or `ROMX`)",
-		    currentSection->name.c_str()
+		    currentSection->displayName()
 		);
+	}
+	if (currentSection->isAnon) {
+		// A fragment literal is emitted as a "fragment" section sharing its parent's name,
+		// which an anonymous section cannot have, as it has no name to share.
+		fatal("Anonymous sections cannot contain fragment literals");
 	}
 
 	// This section has data (ROM0 or ROMX), so it cannot be a UNION

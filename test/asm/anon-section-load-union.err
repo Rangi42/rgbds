@@ -1,0 +1,5 @@
+error: Anonymous sections cannot be `UNION` or `FRAGMENT`
+    at anon-section-load-union.asm(2)
+error: Found `ENDL` outside of a `LOAD` block
+    at anon-section-load-union.asm(4)
+Assembly aborted with 2 errors

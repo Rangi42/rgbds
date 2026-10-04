@@ -161,6 +161,9 @@ This must not increase it past the end of the active memory region.
 .Pp
 The section must have been defined in the object files being linked, unless the section name is followed by the keyword
 .Ic OPTIONAL .
+Anonymous sections
+.Pq see Sx Anonymous sections in Xr rgbasm 5
+cannot be named, so they cannot be placed by a linker script; they are only ever placed automatically, like floating sections.
 .Sh EXAMPLES
 .Bd -literal -offset indent
 ; This line contains only a comment

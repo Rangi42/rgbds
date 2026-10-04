@@ -76,7 +76,7 @@ void out_AddSection(Section const &section) {
 	if (targetBank >= maxNbBanks[section.type]) {
 		fatal(
 		    "Section \"%s\" has an invalid bank range (%" PRIu32 " > %" PRIu32 ")",
-		    section.name.c_str(),
+		    section.displayName(),
 		    section.bank,
 		    maxNbBanks[section.type] - 1
 		);
@@ -388,10 +388,11 @@ static void writeEmptySpace(uint16_t begin, uint16_t end) {
 	}
 }
 
-static void writeSectionName(std::string const &name, FILE *file) {
-	for (char c : name) {
+// Takes a `Section`'s `displayName()`, so that anonymous sections get a placeholder instead of ""
+static void writeSectionName(char const *name, FILE *file) {
+	for (; *name != '\0'; ++name) {
 		// Escape characters that need escaping
-		switch (c) {
+		switch (char c = *name; c) {
 		case '\n':
 			fputs("\\n", file);
 			break;
@@ -481,7 +482,7 @@ static void writeMapBank(SortedSections const &sectList, SectionType type, uint3
 			fprintf(mapFile, "-$%04x", prevEndAddr - 1);
 		}
 		fprintf(mapFile, " ($%04" PRIx16 " byte%s) [\"", sect.size, sect.size == 1 ? "" : "s");
-		writeSectionName(sect.name, mapFile);
+		writeSectionName(sect.displayName(), mapFile);
 		fputs("\"]\n", mapFile);
 
 		if (!options.noSymInMap) {

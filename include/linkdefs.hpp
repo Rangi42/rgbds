@@ -8,7 +8,7 @@
 #include "helpers.hpp" // assume
 
 #define RGBDS_OBJECT_VERSION_STRING "RGB9"
-#define RGBDS_OBJECT_REV            13U
+#define RGBDS_OBJECT_REV            14U
 
 enum AssertionType { ASSERT_WARN, ASSERT_ERROR, ASSERT_FATAL };
 
@@ -81,6 +81,9 @@ enum SectionType {
 static constexpr uint8_t SECTTYPE_TYPE_MASK = 0b111;
 static constexpr uint8_t SECTTYPE_UNION_BIT = 7;
 static constexpr uint8_t SECTTYPE_FRAGMENT_BIT = 6;
+// Anonymous sections have no name, so they cannot be merged with any other section;
+// this bit distinguishes them from sections whose name happens to be empty.
+static constexpr uint8_t SECTTYPE_ANONYMOUS_BIT = 5;
 
 // Tells whether a section has data in its object file definition,
 // depending on type.

@@ -160,6 +160,17 @@ done
 
 # These tests do their own thing
 
+test="anon-section"
+startTest
+"$RGBASM" -o "$otemp" "$test"/a.asm
+"$RGBASM" -o "$gbtemp2" "$test"/b.asm
+continueTest
+rgblinkQuiet -o "$gbtemp" -n "$outtemp" "$otemp" "$gbtemp2" 2>"$errtemp"
+tryDiff /dev/null "$errtemp"
+tryCmpRom "$test"/ref.out.bin
+tryDiff "$test"/ref.out.sym "$outtemp"
+evaluateTest
+
 test="bank-const"
 startTest
 "$RGBASM" -o "$otemp" "$test"/a.asm

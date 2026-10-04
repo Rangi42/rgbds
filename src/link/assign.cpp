@@ -285,7 +285,8 @@ static void assignSection(Section &section, MemoryLocation const &location) {
 }
 
 static std::string describeConstraintsOf(Section const &section) {
-	std::string description = "\"" + section.name + "\" (" + section.typeInfo().name + " section) ";
+	std::string description =
+	    "\"" + std::string(section.displayName()) + "\" (" + section.typeInfo().name + " section) ";
 	if (section.isBankFixed && section.typeInfo().isBanked()) {
 		char bank[9];
 		sprintf_to_array(bank, "%02" PRIx32, section.bank);
@@ -379,7 +380,7 @@ static void placeSection(Section &section) {
 		fatal(
 		    "Unable to place %s: section overlaps with \"%s\"",
 		    describeConstraintsOf(section).c_str(),
-		    overlap->name.c_str()
+		    overlap->displayName()
 		);
 	}
 }
@@ -459,7 +460,7 @@ static void checkOverlayCompat() {
 			}
 
 			unfixedList += "\n- \"";
-			unfixedList += section->name;
+			unfixedList += section->displayName();
 			unfixedList += "\" (";
 			if (!(constraints & (BANK_CONSTRAINED | ORG_CONSTRAINED))) {
 				unfixedList += "bank and address";

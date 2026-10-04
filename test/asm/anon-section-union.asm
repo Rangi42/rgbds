@@ -1,0 +1,2 @@
+SECTION UNION WRAM0
+	ds 2
