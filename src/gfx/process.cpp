@@ -87,6 +87,7 @@ struct Image {
 		GRAY_TOO_MANY,
 		GRAY_NONGRAY,
 		GRAY_CONFLICT,
+		GRAY_SHADOWS_TRANSPARENT,
 	};
 	std::pair<GrayscaleResult, std::optional<Rgba>> isSuitableForGrayscale() const {
 		// Check that all of the grays don't fall into the same "bin"
@@ -111,6 +112,19 @@ struct Image {
 				    color->toCSS()
 				);
 				return {GrayscaleResult::GRAY_NONGRAY, color};
+			}
+			// A DMG palette spec assigns each gray shade to a color index, but if the image
+			// contains transparent pixels, color index 0 becomes transparent instead; that gray
+			// shade then has no color index left to be mapped to.
+			if (options.palSpecType == Options::DMG
+			    && options.dmgShadeIsUnusable(color->grayShade())) {
+				verbosePrint(
+				    VERB_DEBUG,
+				    "Found color #%08x which the DMG palette spec maps to the transparent color "
+				    "index, not using grayscale sorting\n",
+				    color->toCSS()
+				);
+				return {GrayscaleResult::GRAY_SHADOWS_TRANSPARENT, color};
 			}
 			uint8_t mask = 1 << color->grayIndex();
 			if (bins & mask) { // Two in the same bin!
@@ -975,9 +989,6 @@ void process(Png &&png) {
 	if (options.palSpecType == Options::DMG) {
 		char const *prefix =
 		    "Image is not compatible with a DMG palette specification: it contains";
-		if (options.hasTransparentPixels) {
-			fatal("%s transparent pixels", prefix);
-		}
 		switch (auto const [result, color] = image.isSuitableForGrayscale(); result) {
 		case Image::GRAY_OK:
 			break;
@@ -988,6 +999,12 @@ void process(Png &&png) {
 		case Image::GRAY_CONFLICT:
 			fatal(
 			    "%s a color #%08x that reduces to the same gray shade as another one",
+			    prefix,
+			    color->toCSS()
+			);
+		case Image::GRAY_SHADOWS_TRANSPARENT:
+			fatal(
+			    "%s a color #%08x that the DMG palette spec maps to the transparent color index",
 			    prefix,
 			    color->toCSS()
 			);

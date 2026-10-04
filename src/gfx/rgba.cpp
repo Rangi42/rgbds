@@ -100,16 +100,27 @@ uint16_t Rgba::cgbColor() const {
 	return r | g << 5 | b << 10;
 }
 
-uint8_t Rgba::grayIndex() const {
+uint8_t Rgba::grayShade() const {
 	assume(isGray());
 	// 2bpp shades are inverted from RGB PNG; %00 = white, %11 = black
-	uint8_t gray = 255 - red;
+	return (255 - red) * 4 / 256;
+}
+
+uint8_t Rgba::grayIndex() const {
+	assume(isGray());
 	if (options.palSpecType == Options::DMG) {
-		assume(!options.hasTransparentPixels);
-		// Reduce gray shade from 0..<256 to 0..<4, then map to color index,
-		// then reduce to 0..<nbColorsPerPal
-		return options.dmgColors[gray * 4 / 256] * options.nbColorsPerPal / 4;
+		// Map the gray shade to the DMG color index it belongs to, then reduce that index to the
+		// palette slot it ends up in, merging DMG color indexes together if `nbColorsPerPal` < 4.
+		// Color index 0 is taken by transparency if the image has any transparent pixels, which
+		// leaves the shade that `dmg=` assigned to it unusable;
+		// `Image::isSuitableForGrayscale` rejects such images, so the subtraction cannot underflow.
+		uint8_t firstIndex = options.hasTransparentPixels; // 0, or 1 for transparency
+		uint8_t dmgIndex = options.dmgColors[grayShade()];
+		assume(dmgIndex >= firstIndex);
+		return firstIndex + (dmgIndex - firstIndex) * options.maxOpaqueColors() / (4 - firstIndex);
 	}
+	// 2bpp shades are inverted from RGB PNG; %00 = white, %11 = black
+	uint8_t gray = 255 - red;
 	// Reduce gray shade from 0..<256 to hasTransparentPixels..<nbColorsPerPal
 	// Note that `maxOpaqueColors()` already takes `hasTransparentPixels` into account
 	return gray * options.maxOpaqueColors() / 256 + options.hasTransparentPixels;
