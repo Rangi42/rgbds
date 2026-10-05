@@ -1,0 +1,3 @@
+error: Option '-S/--palette-regions' cannot be combined with '-l/--base-palette'
+error: Option '-S/--palette-regions' cannot be combined with '-n/--nb-palettes'
+Conversion aborted after 2 errors

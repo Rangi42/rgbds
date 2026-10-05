@@ -216,7 +216,7 @@ void parseEmbeddedMultiplePalSpec(Png const &png) {
 		    maxNbColors
 		);
 		nbColors = maxNbColors;
-		nbPalettes = options.nbPalettes;
+		nbPalettes = options.maxNbPalettes();
 	}
 	if (size_t nbUsedColors = options.nbColorsPerPal * nbPalettes; nbColors > nbUsedColors) {
 		warnx(
@@ -662,11 +662,11 @@ static void parsePNGFile(char const *filename, std::filebuf &file) {
 
 	// More palettes than the maximum are a warning, not an error
 	uint32_t nbPals = png.height / swatchSize;
-	if (nbPals > options.nbPalettes) {
+	if (nbPals > options.maxNbPalettes()) {
 		warnExtraColors(
 		    "PNG palette", filename, nbPals * options.nbColorsPerPal, options.maxNbColors()
 		);
-		nbPals = options.nbPalettes;
+		nbPals = options.maxNbPalettes();
 	}
 
 	options.palSpec.clear();

@@ -155,12 +155,15 @@ void reverse() {
 	if (mapSize == 0) {
 		fatal("Cannot generate empty image");
 	}
-	if (mapSize > options.maxNbTiles[0] + options.maxNbTiles[1]) {
+	if (mapSize > options.maxNbTiles()) {
+		std::vector<uint32_t> capacities;
+		for (TileRegion const &region : options.tileRegions) {
+			capacities.push_back(region.size);
+		}
 		warnx(
-		    "Total number of tiles (%zu) is more than the limit of %" PRIu16 " + %" PRIu16,
+		    "Total number of tiles (%zu) is more than the limit of %s",
 		    mapSize,
-		    options.maxNbTiles[0],
-		    options.maxNbTiles[1]
+		    sumString(capacities).c_str()
 		);
 	}
 
@@ -239,11 +242,11 @@ void reverse() {
 			);
 		}
 
-		if (palettes.size() > options.nbPalettes) {
+		if (palettes.size() > options.maxNbPalettes()) {
 			warnx(
-			    "Read %zu palettes, more than the specified limit of %" PRIu16,
+			    "Read %zu palettes, more than the specified limit of %" PRIu32,
 			    palettes.size(),
-			    options.nbPalettes
+			    options.maxNbPalettes()
 			);
 		}
 
@@ -293,7 +296,16 @@ void reverse() {
 	}
 
 	std::optional<std::vector<uint8_t>> attrmap;
-	uint16_t nbTilesMappedInBank[2] = {0, 0}; // Only used if there is an attrmap.
+	// The largest offset within a region of each VRAM bank that the tilemap references, plus one;
+	// only used if there is an attrmap.
+	uint32_t nbTilesMappedInBank[2] = {0, 0};
+	// One more than the largest global tile index that the tilemap references, so that we can tell
+	// whether enough tile data was provided; only used if there is an attrmap.
+	uint32_t nbTilesMappedTotal = 0;
+	// Since the attrmap only stores 3 bits of a palette's ID, map each of those to the index of a
+	// palette which was placed at an ID with those 3 bits. Ambiguous IDs resolve to the first
+	// match.
+	std::array<std::optional<size_t>, 8> palOfsByAttrPalID{};
 	if (!options.attrmap.empty()) {
 		attrmap = readInto(options.attrmap);
 		if (attrmap->size() != mapSize) {
@@ -302,6 +314,13 @@ void reverse() {
 			    attrmap->size(),
 			    mapSize
 			);
+		}
+
+		for (size_t i = 0; i < palettes.size() && i < options.maxNbPalettes(); ++i) {
+			std::optional<size_t> &palOfs = palOfsByAttrPalID[options.palPlacementAt(i) & 0b111];
+			if (!palOfs.has_value()) {
+				palOfs = i;
+			}
 		}
 
 		// Scan through the attributes for inconsistencies
@@ -313,9 +332,7 @@ void reverse() {
 			uint8_t attr = (*attrmap)[index];
 			uint8_t palID = attr & 0b111;
 
-			// The unsigned underflow for `palOfs` is intentional, since a nonzero
-			// base palette ID may overflow and continue with IDs from 0.
-			if (uint8_t palOfs = (palID - options.basePalID) & 0b111; palOfs >= palettes.size()) {
+			if (!palOfsByAttrPalID[palID].has_value()) {
 				error(
 				    "Attribute map references palette #%" PRIu8
 				    " at (%zu, %zu), but there %s only %zu palette%s",
@@ -339,49 +356,42 @@ void reverse() {
 					    ty
 					);
 				}
-			} else {
-				// The unsigned underflow for `tileOfs` is intentional, since a nonzero
-				// base tile ID may overflow and continue with IDs from 0.
-				if (uint8_t tileOfs = (*tilemap)[index] - options.baseTileIDs[bank];
-				    tileOfs >= nbTilesMappedInBank[bank]) {
-					nbTilesMappedInBank[bank] = tileOfs + 1;
-				}
+			} else if (std::optional<TilePlacement> const tile =
+			               options.findTile(bank, (*tilemap)[index])) {
+				nbTilesMappedInBank[bank] = std::max(nbTilesMappedInBank[bank], tile->ofs + 1);
+				nbTilesMappedTotal = std::max(nbTilesMappedTotal, tile->index() + 1);
 			}
 		}
 
 		verbosePrint(
 		    VERB_INFO,
-		    "Number of tiles in bank {0: %" PRIu16 ", 1: %" PRIu16 "}\n",
+		    "Number of tiles in bank {0: %" PRIu32 ", 1: %" PRIu32 "}\n",
 		    nbTilesMappedInBank[0],
 		    nbTilesMappedInBank[1]
 		);
 
-		for (int bank = 0; bank < 2; ++bank) {
-			if (nbTilesMappedInBank[bank] > options.maxNbTiles[bank]) {
+		std::array<uint32_t, 2> const maxNbTilesPerBank = options.maxNbTilesPerBank();
+		for (uint8_t bank = 0; bank < 2; ++bank) {
+			if (nbTilesMappedInBank[bank] > maxNbTilesPerBank[bank]) {
 				error(
-				    "Bank %d contains %" PRIu16 " tiles, but the specified limit is %" PRIu16,
+				    "Bank %" PRIu8 " contains %" PRIu32
+				    " tiles, but the specified limit is %" PRIu32,
 				    bank,
 				    nbTilesMappedInBank[bank],
-				    options.maxNbTiles[bank]
+				    maxNbTilesPerBank[bank]
 				);
 			}
 		}
 
-		if (uint16_t const maxTotalNbTiles =
-		        nbTilesMappedInBank[1] > 0
-		            ? std::max<uint16_t>(
-		                  nbTilesMappedInBank[0], options.maxNbTiles[0] + nbTilesMappedInBank[1]
-		              )
-		            : nbTilesMappedInBank[0];
-		    maxTotalNbTiles > nbTiles + options.trim) {
+		if (nbTilesMappedTotal > nbTiles + options.trim) {
 			std::string message =
 			    "The tilemap references " + std::to_string(nbTilesMappedInBank[0]) + " tiles";
 			if (nbTilesMappedInBank[1] > 0) {
-				if (nbTilesMappedInBank[0] != options.maxNbTiles[0]) {
-					message += " out of a maximum " + std::to_string(options.maxNbTiles[0]);
+				if (nbTilesMappedInBank[0] != maxNbTilesPerBank[0]) {
+					message += " out of a maximum " + std::to_string(maxNbTilesPerBank[0]);
 				}
 				message += " in bank 0, and " + std::to_string(nbTilesMappedInBank[1])
-				           + " in bank 1 (total: " + std::to_string(maxTotalNbTiles) + ")";
+				           + " in bank 1 (total: " + std::to_string(nbTilesMappedTotal) + ")";
 			}
 			message += ", but only " + std::to_string(nbTiles) + " have been read";
 			if (options.trim > 0) {
@@ -402,32 +412,29 @@ void reverse() {
 				uint8_t attr = (*attrmap)[index];
 				bool bank = attr & 0b1000;
 
-				// The unsigned underflow for `tileOfs` is intentional, since a nonzero
-				// base tile ID may overflow and continue with IDs from 0.
-				if (uint8_t tileOfs = tileID - options.baseTileIDs[bank];
-				    tileOfs >= options.maxNbTiles[bank]) {
+				if (!options.findTile(bank, tileID).has_value()) {
 					error(
 					    "Tilemap references tile #%" PRIu8
-					    " at (%zu, %zu), but the limit for bank %u is %" PRIu16,
+					    " at (%zu, %zu), but it is not within any tile region in bank %u",
 					    tileID,
 					    tx,
 					    ty,
-					    bank,
-					    options.maxNbTiles[bank]
+					    bank
 					);
 				}
 			}
 		} else {
 			// Tiles trimmed with `-x` were never written to the tile data file, but are
 			// still referenced by the tilemap.
-			size_t const limit = std::min<size_t>(nbTiles + options.trim, options.maxNbTiles[0]);
+			// Without an attrmap, all of the tilemap's tiles are assumed to be in bank 0.
+			size_t const limit =
+			    std::min<size_t>(nbTiles + options.trim, options.endNbTilesInBank(0));
 			for (size_t index = 0; index < mapSize; ++index) {
 				size_t tx = index % width, ty = index / width;
 				uint8_t tileID = (*tilemap)[index];
 
-				// The unsigned underflow for `tileOfs` is intentional, since a nonzero
-				// base tile ID may overflow and continue with IDs from 0.
-				if (uint8_t tileOfs = tileID - options.baseTileIDs[0]; tileOfs >= limit) {
+				std::optional<TilePlacement> const tile = options.findTile(0, tileID);
+				if (!tile.has_value() || tile->index() >= limit) {
 					error(
 					    "Tilemap references tile #%" PRIu8 " at (%zu, %zu), but the limit is %zu",
 					    tileID,
@@ -457,9 +464,7 @@ void reverse() {
 			size_t tx = index % width, ty = index / width;
 			uint8_t palID = (*palmap)[index];
 
-			// The unsigned underflow for `palOfs` is intentional, since a nonzero
-			// base palette ID may overflow and continue with IDs from 0.
-			if (uint8_t palOfs = (palID - options.basePalID) & 0xff; palOfs >= palettes.size()) {
+			if (!options.findPalette(palID).has_value()) {
 				error(
 				    "Palette map references palette #%" PRIu8
 				    " at (%zu, %zu), but there %s only %zu palette%s",
@@ -576,16 +581,27 @@ void reverse() {
 			uint8_t attribute = attrmap ? (*attrmap)[index] : 0b0000;
 			bool bank = attribute & 0b1000;
 			// Get the tile ID at this location
-			size_t tileOfs =
-			    tilemap ? static_cast<uint8_t>((*tilemap)[index] - options.baseTileIDs[bank])
-			                  + (bank ? options.maxNbTiles[0] : 0)
-			            : index;
-			// This should have been enforced by the earlier checking.
-			assume(tileOfs < nbTiles + options.trim);
-			size_t palOfs =
-			    (palmap    ? ((*palmap)[index] - options.basePalID) & 0xff
-			     : attrmap ? (attribute - options.basePalID) & 0b111
-			               : 0);
+			size_t tileOfs = index;
+			if (tilemap) {
+				std::optional<TilePlacement> const tile = options.findTile(bank, (*tilemap)[index]);
+				// This should have been enforced by the earlier checking.
+				assume(tile.has_value());
+				tileOfs = tile->index();
+				assume(tileOfs < nbTiles + options.trim);
+			}
+			// Get the palette at this location
+			size_t palOfs = 0;
+			if (palmap) {
+				std::optional<PalPlacement> const pal = options.findPalette((*palmap)[index]);
+				// This should have been enforced by the earlier checking.
+				assume(pal.has_value());
+				palOfs = pal->index();
+			} else if (attrmap) {
+				// The attrmap's 3 palette ID bits were resolved to a palette earlier.
+				std::optional<size_t> const pal = palOfsByAttrPalID[attribute & 0b111];
+				assume(pal.has_value()); // Should be ensured on data read
+				palOfs = *pal;
+			}
 			assume(palOfs < palettes.size()); // Should be ensured on data read
 
 			// We do not have data for tiles trimmed with `-x`, so assume they are "blank"

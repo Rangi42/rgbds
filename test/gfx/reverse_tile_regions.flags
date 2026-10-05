@@ -1,0 +1,6 @@
+-R 1:0-1,0:0-0,1:2-2
+-S 0-2,4-6
+-t reverse_tile_regions.tilemap
+-a reverse_tile_regions.attrmap
+-q reverse_tile_regions.palmap
+-p reverse_tile_regions.pal

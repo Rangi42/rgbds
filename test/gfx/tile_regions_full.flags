@@ -1,0 +1,2 @@
+# All 4 of the image's tiles cannot fit in a single 2-tile region
+-R 0:0-1

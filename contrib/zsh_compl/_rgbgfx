@@ -56,6 +56,8 @@ local args=(
 	'(-p --palette -P --auto-palette)'{-p,--palette}"+[Output the image's palette in little-endian native RGB555 format]:palette file:_files"
 	'(-q --palette-map -Q --auto-palette-map)'{-q,--palette-map}"+[Output the image's palette map]:palette map file:_files"
 	'(-r --reverse)'{-r,--reverse}'+[Yield an image from binary data]:image width (in tiles):'
+	'(-R --tile-regions)'{-R,--tile-regions}'+[Set the VRAM regions tiles are output into]:tile regions:'
+	'(-S --palette-regions)'{-S,--palette-regions}'+[Set the palette ID regions palettes are output into]:palette regions:'
 	'(-s --palette-size)'{-s,--palette-size}'+[Limit palette size]:palette size:'
 	'(-t --tilemap -T --auto-tilemap)'{-t,--tilemap}'+[Generate a map of tile indices]:tilemap file:_files'
 	'(-W --warning)'{-W,--warning}'+[Toggle warning flags]:warning flag:_rgbgfx_warnings'

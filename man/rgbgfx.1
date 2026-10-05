@@ -2,7 +2,7 @@
 .\"
 .\" SPDX-License-Identifier: MIT
 .\"
-.Dd September 22, 2026
+.Dd October 4, 2026
 .Dt RGBGFX 1
 .Os
 .Sh NAME
@@ -26,7 +26,9 @@
 .Op Fl o Ar out_file
 .Op Fl p Ar pal_file | Fl P
 .Op Fl q Ar pal_map | Fl Q
+.Op Fl R Ar tile_regions
 .Op Fl r Ar width
+.Op Fl S Ar pal_regions
 .Op Fl s Ar nb_colors
 .Op Fl t Ar tilemap | Fl T
 .Op Fl W Ar warning
@@ -143,6 +145,14 @@ Set the base IDs for tile map output.
 .Ar base_ids
 should be one or two numbers between 0 and 255, separated by a comma; they are for bank 0 and bank 1 respectively.
 Both default to 0.
+.Pp
+This cannot be combined with
+.Fl R
+or
+.Fl N ;
+see
+.Fl R
+for a more flexible alternative.
 .It Fl C , Fl \-color-curve
 Modifies the color palettes
 .Pq whether they are generated from the input image or taken from an input palette specification
@@ -335,6 +345,14 @@ Set the base ID for attribute map and palette map output.
 .Ar base_pal
 should be a number between 0 and 255.
 It defaults to 0.
+.Pp
+This cannot be combined with
+.Fl S
+or
+.Fl n ;
+see
+.Fl S
+for a more flexible alternative.
 .It Fl m , Fl \-mirror-tiles
 Deduplicate tiles that are horizontally and/or vertically symmetrical mirror images of each other.
 Only one of each unique tile will be saved in the tile data file, with mirror images counting as duplicates.
@@ -359,14 +377,31 @@ will abort.
 If
 .Fl N
 is not specified, no limit will be set on the amount of tiles placed in bank 0, and tiles will not be placed in bank 1.
+.Pp
+This cannot be combined with
+.Fl R
+or
+.Fl b ;
+see
+.Fl R
+for a more flexible alternative.
 .It Fl n Ar nb_pals , Fl \-nb-palettes Ar nb_pals
 Abort if more than
 .Ar nb_pals
 palettes are generated.
 This may not be more than 256.
+It defaults to 8.
 .Pp
 Note that attribute map output only has 3 bits for the palette ID, so a limit higher than 8 may yield incomplete data unless relying on a palette map
 .Pq see Fl q .
+.Pp
+This cannot be combined with
+.Fl S
+or
+.Fl l ;
+see
+.Fl S
+for a more flexible alternative.
 .It Fl O , Fl \-group-outputs
 Sets the
 .Sq base path
@@ -391,6 +426,43 @@ This is useful if the input image contains more than 8 palettes, as the attribut
 Same as
 .Fl q Ar base_path Ns .palmap
 .Pq see Sx Automatic output paths .
+.It Fl R Ar tile_regions , Fl \-tile-regions Ar tile_regions
+Set the VRAM regions that tiles are output into, in the order given.
+.Ar tile_regions
+should be a comma-separated list of regions, each written as
+.Ql Ar bank : Ar firstID - Ar lastID ,
+where
+.Ar bank
+is 0 or 1, and the IDs are numbers between 0 and 255.
+Whitespace is allowed around all punctuation.
+The last ID may be omitted, so that a region containing a single tile ID can be written as just
+.Ql Ar bank : Ar tileID .
+.Pp
+Tiles are placed into the first region until it is full, then into the second region, and so on.
+Thus, the first
+.Ar lastID - Ar firstID + 1
+tiles are placed in bank
+.Ar bank
+at IDs
+.Ar firstID .. Ar lastID ,
+the next ones begin the following region, and so on; at most
+.Ar lastID - Ar firstID + 1
+tiles may be placed in each region.
+For example,
+.Pq Fl R Ar 1:$80-$FE,0:0-7E
+begins in bank 1 at tile ID $80, continues at $81, and once $FE is reached, continues in bank 0 at tile ID 0; bank 1's $FF and bank 0's $7F are never used.
+.Pp
+Regions may not overlap; tiles in different VRAM banks may of course share the same tile ID.
+If more tiles are generated than can fit in all of the regions combined,
+.Nm
+will abort.
+.Pp
+Since tile map output only has 8 bits for the tile ID, more than 256 tiles in a single VRAM bank will have to share tile IDs.
+.Pp
+This cannot be combined with
+.Fl b
+or
+.Fl N .
 .It Fl r Ar width , Fl \-reverse Ar width
 Switches
 .Nm
@@ -409,6 +481,40 @@ is the width of the image to generate, in tiles.
 .Fl r 0
 chooses a width to make the image as square as possible.
 This is useful if you do not know the original width.
+.It Fl S Ar pal_regions , Fl \-palette-regions Ar pal_regions
+Set the palette ID regions that palettes are output into, in the order given.
+.Ar pal_regions
+should be a comma-separated list of regions, each written as
+.Ql Ar firstID - Ar lastID ,
+where the IDs are numbers between 0 and 255.
+Whitespace is allowed around all punctuation.
+The last ID may be omitted, so that a region containing a single palette ID can be written as just
+.Ql Ar palID .
+.Pp
+Palettes are placed into the first region until it is full, then into the second region, and so on.
+Thus, the first
+.Ar lastID - Ar firstID + 1
+palettes are placed at
+.Ar firstID .. Ar lastID ,
+the next ones begin the following region, and so on; at most
+.Ar lastID - Ar firstID + 1
+palettes may be placed in each region.
+For example,
+.Pq Fl S Ar 0-2,4-6
+generates at most 6 palettes, placing them at IDs 0, 1, 2, 4, 5, and 6, and leaving IDs 3 and 7 for other uses.
+.Pp
+Regions may not overlap.
+If more palettes are generated than can fit in all of the regions combined,
+.Nm
+will abort.
+.Pp
+Since attribute map output only has 3 bits for the palette ID, any palette placed at an ID of 8 or more will have its ID truncated
+.Pq see Fl q .
+.Pp
+This cannot be combined with
+.Fl l
+or
+.Fl n .
 .It Fl s Ar nb_colors , Fl \-palette-size Ar nb_colors
 Specify how many colors each palette contains, including the transparent one if any.
 .Ar nb_colors
@@ -753,7 +859,7 @@ both ways, so the
 .Pq Keep in mind that many of consoles output different colors, so there is no true reference rendering.
 .Pp
 When using reverse mode, make sure to pass the same flags that were given when generating the data, especially
-.Fl C , d , N , s , x ,
+.Fl C , d , N , R , S , s , x ,
 and
 .Fl Z .
 .Do Sx At-files Dc may help with this .

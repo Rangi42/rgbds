@@ -34,6 +34,13 @@ using namespace std::literals::string_view_literals;
 
 Options options;
 
+// A tile or palette ID range, as parsed from `-R` or `-S`, before its global offset is known
+struct ParsedRegion {
+	uint8_t bank;  // Which VRAM bank this region's tiles are in; only meaningful for `-R`
+	uint8_t first; // The region's first ID
+	uint8_t last;  // The region's last ID
+};
+
 // Flags which must be processed after the option parsing finishes
 static struct LocalOptions {
 	std::optional<std::string> palSpec; // -c
@@ -44,11 +51,24 @@ static struct LocalOptions {
 	bool groupOutputs;                  // -O
 	bool reverse;                       // -r
 
+	// The base IDs and capacities from `-b`, `-N`, `-l`, and `-n`, which are only used to compute
+	// `options.tileRegions` and `options.palRegions` once all the options have been parsed
+	std::array<uint8_t, 2> baseTileIDs{0, 0};
+	bool baseTilesSet = false;                            // -b
+	std::array<uint16_t, 2> maxNbTiles{UINT16_MAX, 0};    // -N
+	bool maxNbTilesSet = false;                           // -N
+	uint8_t basePalID = 0;                                // -l
+	bool basePalIDSet = false;                            // -l
+	uint16_t nbPalettes = 8;                              // -n
+	bool nbPalettesSet = false;                           // -n
+	std::optional<std::vector<ParsedRegion>> tileRegions; // -R
+	std::optional<std::vector<ParsedRegion>> palRegions;  // -S
+
 	bool autoAny() const { return autoAttrmap || autoTilemap || autoPalettes || autoPalmap; }
 } localOptions;
 
 // Short options
-static char const *optstring = "Aa:B:b:Cc:d:hi:L:l:mN:n:Oo:Pp:Qq:r:s:Tt:U:uVvW:wXx:YZ";
+static char const *optstring = "Aa:B:b:Cc:d:hi:L:l:mN:n:Oo:Pp:Qq:R:r:S:s:Tt:U:uVvW:wXx:YZ";
 
 // Long-only option variable
 static int longOpt; // `--color`
@@ -81,7 +101,9 @@ static option const longopts[] = {
     {"palette",          required_argument, nullptr,  'p'},
     {"auto-palette-map", no_argument,       nullptr,  'Q'},
     {"palette-map",      required_argument, nullptr,  'q'},
+    {"tile-regions",     required_argument, nullptr,  'R'},
     {"reverse",          required_argument, nullptr,  'r'},
+    {"palette-regions",  required_argument, nullptr,  'S'},
     {"palette-size",     required_argument, nullptr,  's'},
     {"auto-tilemap",     no_argument,       nullptr,  'T'},
     {"tilemap",          required_argument, nullptr,  't'},
@@ -105,8 +127,8 @@ static Usage usage = {
         "[-r stride]", "[-ChmOuVXYZ]", "[-v [-v ...]]", "[-a <attr_map> | -A]", "[-b <base_ids>]",
         "[-c <colors>]", "[-d <depth>]", "[-i <tileset_file>]", "[-L <slice>]", "[-l <base_pal>]",
         "[-N <nb_tiles>]", "[-n <nb_pals>]", "[-o <out_file>]", "[-p <pal_file> | -P]",
-        "[-q <pal_map> | -Q]", "[-s <nb_colors>]", "[-t <tile_map> | -T]", "[-x <nb_tiles>]",
-        "<file>",
+        "[-q <pal_map> | -Q]", "[-R <tile_regions>]", "[-S <pal_regions>]", "[-s <nb_colors>]",
+        "[-t <tile_map> | -T]", "[-x <nb_tiles>]", "<file>",
     },
     .options = {
         {{"-m", "--mirror-tiles"}, {"optimize out mirrored tiles"}},
@@ -137,6 +159,167 @@ static void skipBlankSpace(char const *&arg) {
 	arg += strspn(arg, " \t");
 }
 
+// Parses a comma-separated list of ID regions, which must be in one of these forms:
+//   "bank:firstID-lastID, bank:firstID-lastID, ..." for tiles (`-R`)
+//   "firstID-lastID, firstID-lastID, ..."         for palettes (`-S`)
+// A region's last ID may be omitted, so that "X" is short for "X-X".
+// Blank space is allowed around all of the separators.
+// Returns `std::nullopt` (after reporting at least one error) if the list is malformed, or if any
+// two regions overlap; otherwise, the regions are returned in the order given.
+static std::optional<std::vector<ParsedRegion>> parseRegions(
+    char const *arg,
+    char const *argName, // e.g. "Tile regions", for diagnostics
+    bool hasBank         // Whether each region is prefixed with a VRAM bank
+) {
+	char const *argPtr = arg; // Make a copy for scanning
+	std::vector<ParsedRegion> regions;
+	char const *idName = hasBank ? "Tile region ID" : "Palette region ID";
+	bool ok = true;
+
+	skipBlankSpace(argPtr);
+	if (*argPtr == '\0') {
+		error("%s must not be empty", argName);
+		return std::nullopt;
+	}
+
+	for (;;) {
+		ParsedRegion region{};
+
+		if (hasBank) {
+			uint16_t bank = readNumber(argPtr, "Tile region bank", 0);
+			if (bank >= 2) {
+				error("Tile region bank must be 0 or 1, not %" PRIu16, bank);
+				ok = false;
+			}
+			region.bank = bank;
+			skipBlankSpace(argPtr);
+			if (*argPtr != ':') {
+				error("Missing colon after bank in \"%s\"", arg);
+				ok = false;
+				break;
+			}
+			++argPtr; // Skip colon
+			skipBlankSpace(argPtr);
+		}
+
+		uint16_t first = readNumber(argPtr, idName, 0);
+		if (first >= 256) {
+			error("%s must be below 256", idName);
+			ok = false;
+			first = 0;
+		}
+		uint16_t last = first;
+
+		skipBlankSpace(argPtr);
+		if (*argPtr == '-') {
+			++argPtr; // Skip hyphen
+			skipBlankSpace(argPtr);
+			last = readNumber(argPtr, idName, first);
+			if (last >= 256) {
+				error("%s must be below 256", idName);
+				ok = false;
+				last = first;
+			} else if (last < first) {
+				error(
+				    "A region's last ID (%" PRIu16 ") must not be below its first ID (%" PRIu16 ")",
+				    last,
+				    first
+				);
+				ok = false;
+				last = first;
+			}
+		}
+		region.first = first;
+		region.last = last;
+		regions.push_back(region);
+
+		skipBlankSpace(argPtr);
+		if (*argPtr == '\0') {
+			break;
+		} else if (*argPtr != ',') {
+			error("Regions in \"%s\" must be separated by commas", arg);
+			ok = false;
+			break;
+		}
+		++argPtr; // Skip comma
+		skipBlankSpace(argPtr);
+	}
+
+	// Regions must not overlap, or else an ID's placement would be ambiguous.
+	// Only the first overlap is reported, since there may be many.
+	for (size_t i = 0; i < regions.size() && ok; ++i) {
+		for (size_t j = 0; j < i; ++j) {
+			// Tiles in different VRAM banks may of course share the same tile ID
+			if ((!hasBank || regions[i].bank == regions[j].bank)
+			    && regions[i].first <= regions[j].last && regions[j].first <= regions[i].last) {
+				error("%s: region #%zu overlaps region #%zu", argName, i + 1, j + 1);
+				ok = false;
+			}
+		}
+	}
+
+	return ok ? std::optional{std::move(regions)} : std::nullopt;
+}
+
+// Fills in `options.tileRegions` and `options.palRegions`, from either the `-R`/`-S` region lists,
+// or the `-b`/`-N` and `-l`/`-n` base IDs and capacities, respectively.
+static void computeRegions() {
+	// `-R`/`-S` replace `-b`/`-N` and `-l`/`-n` entirely, since they describe the same thing
+	if (localOptions.tileRegions) {
+		if (localOptions.baseTilesSet) {
+			error("Option '-R/--tile-regions' cannot be combined with '-b/--base-tiles'");
+		}
+		if (localOptions.maxNbTilesSet) {
+			error("Option '-R/--tile-regions' cannot be combined with '-N/--nb-tiles'");
+		}
+		if (localOptions.tileRegions->empty()) {
+			// A malformed region list aborts the conversion, but use the `-b`/`-N` default anyway,
+			// so that the regions are always well-defined
+			options.tileRegions.push_back(TileRegion{0, 0, UINT16_MAX, 0});
+		} else {
+			uint32_t offset = 0;
+			for (ParsedRegion const &region : *localOptions.tileRegions) {
+				uint32_t size = static_cast<uint32_t>(region.last) - region.first + 1;
+				options.tileRegions.push_back(TileRegion{region.bank, region.first, size, offset});
+				offset += size;
+			}
+		}
+	} else {
+		// `-b` places a contiguous range of IDs at the start of each bank, and `-N` limits how many
+		// of them are used; a bank with a capacity of 0 contributes no region at all
+		uint32_t offset = 0;
+		for (uint8_t bank = 0; bank < 2; ++bank) {
+			if (uint32_t size = localOptions.maxNbTiles[bank]; size > 0) {
+				options.tileRegions.push_back(
+				    TileRegion{bank, localOptions.baseTileIDs[bank], size, offset}
+				);
+				offset += size;
+			}
+		}
+	}
+
+	if (localOptions.palRegions) {
+		if (localOptions.basePalIDSet) {
+			error("Option '-S/--palette-regions' cannot be combined with '-l/--base-palette'");
+		}
+		if (localOptions.nbPalettesSet) {
+			error("Option '-S/--palette-regions' cannot be combined with '-n/--nb-palettes'");
+		}
+		if (localOptions.palRegions->empty()) {
+			options.palRegions.push_back(PalRegion{0, 8, 0});
+		} else {
+			uint32_t offset = 0;
+			for (ParsedRegion const &region : *localOptions.palRegions) {
+				uint32_t size = static_cast<uint32_t>(region.last) - region.first + 1;
+				options.palRegions.push_back(PalRegion{region.first, size, offset});
+				offset += size;
+			}
+		}
+	} else {
+		options.palRegions.push_back(PalRegion{localOptions.basePalID, localOptions.nbPalettes, 0});
+	}
+}
+
 static void parseArg(int ch, char *arg) {
 	char const *argPtr = arg; // Make a copy for scanning
 
@@ -158,14 +341,15 @@ static void parseArg(int ch, char *arg) {
 		break;
 
 	case 'b': {
+		localOptions.baseTilesSet = true;
 		uint16_t number = readNumber(argPtr, "Bank 0 base tile ID", 0);
 		if (number >= 256) {
 			error("Bank 0 base tile ID must be below 256");
 		} else {
-			options.baseTileIDs[0] = number;
+			localOptions.baseTileIDs[0] = number;
 		}
 		if (*argPtr == '\0') {
-			options.baseTileIDs[1] = 0;
+			localOptions.baseTileIDs[1] = 0;
 			break;
 		}
 		skipBlankSpace(argPtr);
@@ -179,7 +363,7 @@ static void parseArg(int ch, char *arg) {
 		if (number >= 256) {
 			error("Bank 1 base tile ID must be below 256");
 		} else {
-			options.baseTileIDs[1] = number;
+			localOptions.baseTileIDs[1] = number;
 		}
 		if (*argPtr != '\0') {
 			error("Base tile IDs must be one or two comma-separated numbers, not \"%s\"", arg);
@@ -281,13 +465,14 @@ static void parseArg(int ch, char *arg) {
 		break;
 
 	case 'l': {
+		localOptions.basePalIDSet = true;
 		uint16_t number = readNumber(argPtr, "Base palette ID", 0);
 		if (*argPtr != '\0') {
 			error("Base palette ID must be a valid number, not \"%s\"", arg);
 		} else if (number >= 256) {
 			error("Base palette ID must be below 256");
 		} else {
-			options.basePalID = number;
+			localOptions.basePalID = number;
 		}
 		break;
 	}
@@ -306,12 +491,13 @@ static void parseArg(int ch, char *arg) {
 		// If they were greater than 256, it would permit tile IDs to be truncated in the tilemap.
 		// We do warn that tile IDs may be truncated for the implicit/default unlimited number of
 		// tiles in bank 0.
-		options.maxNbTiles[0] = readNumber(argPtr, "Number of tiles in bank 0", 256);
-		if (options.maxNbTiles[0] > 256) {
+		localOptions.maxNbTilesSet = true;
+		localOptions.maxNbTiles[0] = readNumber(argPtr, "Number of tiles in bank 0", 256);
+		if (localOptions.maxNbTiles[0] > 256) {
 			error("Bank 0 cannot contain more than 256 tiles");
 		}
 		if (*argPtr == '\0') {
-			options.maxNbTiles[1] = 0;
+			localOptions.maxNbTiles[1] = 0;
 			break;
 		}
 		skipBlankSpace(argPtr);
@@ -321,8 +507,8 @@ static void parseArg(int ch, char *arg) {
 		}
 		++argPtr; // Skip comma
 		skipBlankSpace(argPtr);
-		options.maxNbTiles[1] = readNumber(argPtr, "Number of tiles in bank 1", 256);
-		if (options.maxNbTiles[1] > 256) {
+		localOptions.maxNbTiles[1] = readNumber(argPtr, "Number of tiles in bank 1", 256);
+		if (localOptions.maxNbTiles[1] > 256) {
 			error("Bank 1 cannot contain more than 256 tiles");
 		}
 		if (*argPtr != '\0') {
@@ -332,6 +518,7 @@ static void parseArg(int ch, char *arg) {
 		break;
 
 	case 'n': {
+		localOptions.nbPalettesSet = true;
 		uint16_t number = readNumber(argPtr, "Number of palettes", 256);
 		if (*argPtr != '\0') {
 			error("Number of palettes ('-n') must be a valid number, not \"%s\"", arg);
@@ -341,7 +528,7 @@ static void parseArg(int ch, char *arg) {
 		} else if (number == 0) {
 			error("Number of palettes ('-n') may not be 0");
 		} else {
-			options.nbPalettes = number;
+			localOptions.nbPalettes = number;
 		}
 		break;
 	}
@@ -387,6 +574,14 @@ static void parseArg(int ch, char *arg) {
 		if (*argPtr != '\0') {
 			error("Reversed image stride ('-r') must be a valid number, not \"%s\"", arg);
 		}
+		break;
+
+	case 'R':
+		localOptions.tileRegions = parseRegions(arg, "Tile regions", true);
+		break;
+
+	case 'S':
+		localOptions.palRegions = parseRegions(arg, "Palette regions", false);
 		break;
 
 	case 's':
@@ -517,8 +712,17 @@ static void verboseOutputConfig() {
 	if (options.trim != 0) {
 		fprintf(stderr, "\tTrim the last %" PRIu64 " tiles\n", options.trim);
 	}
-	// -n/--nb-palettes
-	fprintf(stderr, "\tMaximum %" PRIu16 " palettes\n", options.nbPalettes);
+	// -n/--nb-palettes, -l/--base-palette, -S/--palette-regions
+	fprintf(stderr, "\tMaximum %" PRIu32 " palettes\n", options.maxNbPalettes());
+	for (PalRegion const &region : options.palRegions) {
+		fprintf(
+		    stderr,
+		    "\t\tpalette IDs $%02" PRIx8 "-$%02" PRIx8 " (%" PRIu32 " palettes)\n",
+		    region.first,
+		    region.lastPalID(),
+		    region.size
+		);
+	}
 	// -s/--palette-size
 	fprintf(stderr, "\tPalettes contain %" PRIu8 " colors\n", options.nbColorsPerPal);
 	// -c/--colors
@@ -568,26 +772,18 @@ static void verboseOutputConfig() {
 		    options.inputSlice.top
 		);
 	}
-	// -b/--base-tiles
-	if (options.baseTileIDs[0] || options.baseTileIDs[1]) {
+	// -b/--base-tiles, -N/--nb-tiles, -R/--tile-regions
+	fprintf(stderr, "\tMaximum %" PRIu32 " tiles\n", options.maxNbTiles());
+	for (TileRegion const &region : options.tileRegions) {
 		fprintf(
 		    stderr,
-		    "\tBase tile IDs: bank 0 = 0x%02" PRIx8 ", bank 1 = 0x%02" PRIx8 "\n",
-		    options.baseTileIDs[0],
-		    options.baseTileIDs[1]
+		    "\t\tbank %" PRIu8 " tile IDs $%02" PRIx8 "-$%02" PRIx8 " (%" PRIu32 " tiles)\n",
+		    region.bank,
+		    region.first,
+		    region.lastTileID(),
+		    region.size
 		);
 	}
-	// -l/--base-palette
-	if (options.basePalID) {
-		fprintf(stderr, "\tBase palette ID: %" PRIu8 "\n", options.basePalID);
-	}
-	// -N/--nb-tiles
-	fprintf(
-	    stderr,
-	    "\tMaximum %" PRIu16 " tiles in bank 0, and %" PRIu16 " in bank 1\n",
-	    options.maxNbTiles[0],
-	    options.maxNbTiles[1]
-	);
 	// -O/--group-outputs (influences other options)
 	auto printPath = [](char const *name, std::string const &path) {
 		if (!path.empty()) {
@@ -641,6 +837,9 @@ static void replaceExtension(std::string &path, char const *extension) {
 
 int main(int argc, char *argv[]) {
 	cli_ParseArgs(argc, argv, optstring, longopts, parseArg, usage);
+
+	// This must happen before the pal specs are parsed, since they depend on the palette capacity
+	computeRegions();
 
 	if (options.nbColorsPerPal == 0) {
 		options.nbColorsPerPal = 1u << options.bitDepth;

@@ -459,14 +459,29 @@ static void outputPalettes(std::vector<Palette> const &palettes) {
 	});
 	// LCOV_EXCL_STOP
 
-	if (size_t nbPals = palettes.size(); nbPals > options.nbPalettes) {
+	uint32_t const maxNbPalettes = options.maxNbPalettes();
+	if (size_t nbPals = palettes.size(); nbPals > maxNbPalettes) {
 		// If the palette generation is wrong, other (dependee) operations are likely to be
 		// nonsensical, so fatal-error outright
-		fatal("Generated %zu palettes, over the maximum of %" PRIu16, nbPals, options.nbPalettes);
-	} else if (nbPals > 8 && !options.attrmap.empty() && options.palmap.empty()) {
-		// With `-n/--nb-palettes` greater than 8, palette IDs may be truncated in the attrmap
-		// (though not in the palmap), so warn about that.
-		warnx("Generated %zu palettes, of which only 8 are representable in the attrmap", nbPals);
+		fatal("Generated %zu palettes, over the maximum of %" PRIu32, nbPals, maxNbPalettes);
+	} else if (!options.attrmap.empty() && options.palmap.empty()) {
+		// Palette IDs only have 3 bits in the attrmap, so any ID of 8 or more gets truncated;
+		// count how many of the generated palettes would be affected, and warn if any are.
+		// (A palmap has a full byte, so it does not need this warning.)
+		uint32_t nbRepresentable = 0;
+		for (size_t i = 0; i < palettes.size(); ++i) {
+			if (options.palPlacementAt(i) < 8) {
+				++nbRepresentable;
+			}
+		}
+		if (nbRepresentable < palettes.size()) {
+			warnx(
+			    "Generated %zu palettes, of which only %" PRIu32
+			    " are representable in the attrmap",
+			    palettes.size(),
+			    nbRepresentable
+			);
+		}
 	}
 
 	if (!options.palettes.empty()) {
@@ -699,44 +714,27 @@ static void outputUnoptimizedMaps(
 			output.value()->sputc(byte);
 		}
 	};
-	uint16_t tileIdx = 0;
-	uint8_t bank = 0;
+	uint32_t tileIdx = 0;
 	for (AttrmapEntry const &attr : attrmap) {
-		// A non-zero base ID may make this addition overflow, wrapping around the available
-		// palette IDs. Since the operands are unsigned, this won't cause undefined behavior.
-		// With `-n/--nb-palettes` greater than 8, palette IDs may be truncated in the attrmap
-		// (though not in the palmap), which was already warned about.
-		uint8_t palID = attr.getPalID(mappings) + options.basePalID;
+		// Palette IDs only have 3 bits in the attrmap, so they may be truncated there (though not
+		// in the palmap) if any palette region's IDs are 8 or more, which was already warned about.
+		uint8_t palID = options.palPlacementAt(attr.getPalID(mappings));
 		if (attr.isBackgroundTile()) {
-			// The tile bank may be 2 here, which is fine since background tiles are emitted as
-			// if they used the base tile ID and bank 0.
-			assume(bank <= 2);
-
-			emit(tilemapOutput, options.baseTileIDs[0]);
+			// Background tiles are not part of the tile data, so they are emitted as if they used
+			// the first tile region's ID in bank 0, whichever bank that region is actually in.
+			emit(tilemapOutput, options.backgroundTileID());
 			emit(attrmapOutput, palID & 0b111); // The other flags are all zeros.
 			emit(palmapOutput, palID);
 			// Since background tiles are not in tile data, they do not increment the tile index.
 		} else {
-			// The only valid tile banks are 0 and 1.
-			assume(bank < 2);
-
-			// A non-zero base ID may make this addition overflow, wrapping around the available
-			// tile IDs. Since the operands are unsigned, this won't cause undefined behavior.
-			// With `-N/--nb-tiles` unlimited (by default) for bank 0, tile IDs may be truncated in
-			// the tilemap, which was already warned about.
-			uint8_t tileID = tileIdx + options.baseTileIDs[bank];
+			// Tile IDs may be truncated in the tilemap if a region's capacity exceeds 256, which
+			// was already warned about.
+			auto [bank, tileID] = options.tilePlacementAt(tileIdx);
 			emit(tilemapOutput, tileID);
 			emit(attrmapOutput, (palID & 0b111) | bank << 3); // The other flags are all zeros.
 			emit(palmapOutput, palID);
 
 			++tileIdx;
-			// The `bank` may increment from 1 to 2, if banks 0 and 1 are both full. By then all
-			// the tiles should have been emitted, since there cannot be more tiles than could fit
-			// in both banks, but there may still be background tiles to skip.
-			if (tileIdx >= options.maxNbTiles[bank]) {
-				tileIdx = 0;
-				++bank;
-			}
 		}
 	}
 }
@@ -830,7 +828,7 @@ static UniqueTiles dedupTiles(
 			attr.xFlip = false;
 			attr.yFlip = false;
 			attr.bank = 0;
-			attr.tileID = options.baseTileIDs[attr.bank];
+			attr.tileID = options.backgroundTileID();
 		} else {
 			auto [tileIdx, matchType] = tiles.addTile({tile, palettes[attr.getPalID(mappings)]});
 
@@ -845,9 +843,10 @@ static UniqueTiles dedupTiles(
 
 			attr.xFlip = matchType == TileData::HFLIP || matchType == TileData::VHFLIP;
 			attr.yFlip = matchType == TileData::VFLIP || matchType == TileData::VHFLIP;
-			attr.bank = tileIdx >= options.maxNbTiles[0];
-			attr.tileID = (attr.bank ? tileIdx - options.maxNbTiles[0] : tileIdx)
-			              + options.baseTileIDs[attr.bank];
+			// Convert from the 16-bit "global" tile ID to the 8-bit tile ID and bank bit
+			auto [bank, tileID] = options.tilePlacementAt(tileIdx);
+			attr.bank = bank;
+			attr.tileID = tileID;
 		}
 	}
 
@@ -903,8 +902,8 @@ static void outputTilemap(std::vector<AttrmapEntry> const &attrmap) {
 		// LCOV_EXCL_STOP
 	}
 
-	// With `-N/--nb-tiles` unlimited (by default) for bank 0, tile IDs may be truncated in the
-	// tilemap, which was already warned about.
+	// With `-N/--nb-tiles` unlimited (by default) for bank 0, or with any tile region larger than
+	// 256 tiles, tile IDs may be truncated in the tilemap, which was already warned about.
 	for (AttrmapEntry const &entry : attrmap) {
 		output->sputc(entry.tileID); // The tile ID has already been converted
 	}
@@ -922,11 +921,9 @@ static void
 	for (AttrmapEntry const &entry : attrmap) {
 		uint8_t attr = entry.xFlip << 5 | entry.yFlip << 6;
 		attr |= entry.bank << 3;
-		// The unsigned underflow for the palette ID is intentional, since a
-		// nonzero base palette ID may overflow and continue with IDs from 0.
-		// With `-n/--nb-palettes` greater than 8, palette IDs may be truncated in the attrmap
-		// (though not in the palmap), which was already warned about.
-		attr |= (entry.getPalID(mappings) + options.basePalID) & 0b111;
+		// Palette IDs only have 3 bits in the attrmap, so they may be truncated there (though not
+		// in the palmap) if any palette region's IDs are 8 or more, which was already warned about.
+		attr |= options.palPlacementAt(entry.getPalID(mappings)) & 0b111;
 		output->sputc(attr);
 	}
 }
@@ -941,9 +938,9 @@ static void
 	}
 
 	for (AttrmapEntry const &entry : attrmap) {
-		// The unsigned underflow for the palette ID is intentional, since a
-		// nonzero base palette ID may overflow and continue with IDs from 0.
-		output->sputc(entry.getPalID(mappings) + options.basePalID);
+		// Unlike in the attrmap, the palmap has a full byte for the palette ID; however, a nonzero
+		// base palette ID (`-l`, or the first ID of a `-S` region) may still wrap around past 255.
+		output->sputc(options.palPlacementAt(entry.getPalID(mappings)));
 	}
 }
 
@@ -1154,22 +1151,34 @@ continue_visiting_tiles:;
 	outputPalettes(palettes);
 
 	auto checkTileCountLimit = [](size_t nbTiles) {
-		if (nbTiles > options.maxNbTiles[0] + options.maxNbTiles[1]) {
+		if (nbTiles > options.maxNbTiles()) {
+			std::vector<uint32_t> capacities;
+			for (TileRegion const &region : options.tileRegions) {
+				capacities.push_back(region.size);
+			}
 			fatal(
-			    "Image contains %zu tiles, exceeding the limit of %" PRIu16 " + %" PRIu16,
+			    "Image contains %zu tiles, exceeding the limit of %s",
 			    nbTiles,
-			    options.maxNbTiles[0],
-			    options.maxNbTiles[1]
+			    sumString(capacities).c_str()
 			);
-		} else if (((nbTiles > 256 && options.maxNbTiles[0] > 256)
-		            || (nbTiles > options.maxNbTiles[0] + 256u && options.maxNbTiles[1] > 256))
-		           && !options.tilemap.empty()) {
-			// With `-N/--nb-tiles` unlimited (by default) for bank 0, tile IDs may be truncated in
-			// the tilemap, so warn about that.
-			warnx(
-			    "Image contains %zu tiles, of which only 256 are representable in the tilemap",
-			    nbTiles
-			);
+		} else if (!options.tilemap.empty()) {
+			// Tile IDs only have 8 bits in the tilemap, so if more than 256 tiles land in a single
+			// VRAM bank, some of them must share IDs. With `-N/--nb-tiles` unlimited (by default)
+			// for bank 0, or with any `-R` region larger than 256 tiles, this may happen.
+			std::array<size_t, 2> nbTilesPerBank{0, 0};
+			for (size_t remaining = nbTiles; remaining > 0;) {
+				TileRegion const &region = options.tileRegionAt(nbTiles - remaining);
+				size_t nbInRegion = std::min(remaining, static_cast<size_t>(region.size));
+
+				nbTilesPerBank[region.bank] += nbInRegion;
+				remaining -= nbInRegion;
+			}
+			if (nbTilesPerBank[0] > 256 || nbTilesPerBank[1] > 256) {
+				warnx(
+				    "Image contains %zu tiles, of which only 256 are representable in the tilemap",
+				    nbTiles
+				);
+			}
 		}
 	};
 

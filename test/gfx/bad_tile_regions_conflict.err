@@ -1,0 +1,3 @@
+error: Option '-R/--tile-regions' cannot be combined with '-b/--base-tiles'
+error: Option '-R/--tile-regions' cannot be combined with '-N/--nb-tiles'
+Conversion aborted after 2 errors
