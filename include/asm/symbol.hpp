@@ -23,9 +23,6 @@ enum SymbolType {
 	SYM_REF // Forward reference to a label
 };
 
-struct Symbol;                    // Forward declaration for `sym_IsPC`
-bool sym_IsPC(Symbol const *sym); // Forward declaration for `getSection`
-
 struct Symbol {
 	InternedStr name;
 	SymbolType type;
@@ -52,6 +49,7 @@ struct Symbol {
 	bool isDefined() const { return type != SYM_REF; }
 	bool isNumeric() const { return type == SYM_LABEL || type == SYM_EQU || type == SYM_VAR; }
 	bool isLabel() const { return type == SYM_LABEL || type == SYM_REF; }
+	bool isPC() const;
 
 	bool isConstant() const {
 		if (type == SYM_LABEL) {
@@ -61,7 +59,7 @@ struct Symbol {
 		return type == SYM_EQU || type == SYM_VAR;
 	}
 
-	Section *getSection() const { return sym_IsPC(this) ? sect_GetSymbolSection() : section; }
+	Section *getSection() const { return isPC() ? sect_GetSymbolSection() : section; }
 
 	int32_t getValue() const;
 	int32_t getOutputValue() const;

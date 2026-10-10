@@ -60,18 +60,27 @@ void Expression::makeNumber(uint32_t value) {
 
 void Expression::makeSymbol(InternedStr symName) {
 	assume(rpn.empty());
-	if (Symbol *sym = sym_FindScopedSymbol(symName); sym_IsPC(sym) && !sect_GetSymbolSection()) {
-		error("PC has no value outside of a section");
-		data = 0;
-	} else if (sym && !sym->isNumeric() && !sym->isLabel()) {
+	if (Symbol *sym = sym_FindScopedSymbol(symName); sym && !sym->isNumeric() && !sym->isLabel()) {
 		error("`%s` is not a numeric symbol", symName.c_str());
 		data = 0;
+	} else if (sym && sym->isPC() && !sect_GetSymbolSection()) {
+		error("PC has no value outside of a section");
+		data = 0;
 	} else if (!sym || !sym->isConstant()) {
-		data = sym_IsPC(sym) ? "PC is not constant at assembly time"
-		                     : (sym && sym->isDefined()
-		                            ? "`"s + symName.str() + "` is not constant at assembly time"
-		                            : "undefined symbol `"s + symName.str() + "`")
-		                           + (sym_IsPurgedScoped(symName) ? "; it was purged" : "");
+		if (sym && sym->isPC()) {
+			data = "PC is not constant at assembly time";
+		} else {
+			std::string msg;
+			if (!sym || !sym->isDefined()) {
+				msg = "undefined symbol `"s + symName.str() + "`";
+			} else {
+				msg = "`"s + symName.str() + "` is not constant at assembly time";
+			}
+			if (sym_IsPurgedScoped(symName)) {
+				msg += "; it was purged";
+			}
+			data = msg;
+		}
 		sym = sym_Ref(symName);
 		rpn.emplace_back(RPN_SYM, sym->name);
 	} else {
@@ -81,7 +90,7 @@ void Expression::makeSymbol(InternedStr symName) {
 
 void Expression::makeBankSymbol(InternedStr symName) {
 	assume(rpn.empty());
-	if (Symbol const *sym = sym_FindScopedSymbol(symName); sym_IsPC(sym)) {
+	if (Symbol const *sym = sym_FindScopedSymbol(symName); sym && sym->isPC()) {
 		// The @ symbol is treated differently.
 		if (Section *section = sect_GetSymbolSection(); !section) {
 			error("PC has no bank outside of a section");

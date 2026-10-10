@@ -54,8 +54,8 @@ static char savedDATE[256];
 static char savedTIMESTAMP_ISO8601_LOCAL[256];
 static char savedTIMESTAMP_ISO8601_UTC[256];
 
-bool sym_IsPC(Symbol const *sym) {
-	return sym == PCSymbol;
+bool Symbol::isPC() const {
+	return this == PCSymbol;
 }
 
 bool sym_IsDotScope(InternedStr symName) {
@@ -310,7 +310,8 @@ Symbol *sym_FindScopedValidSymbol(InternedStr symName) {
 	Symbol *sym = sym_FindScopedSymbol(symName);
 
 	// `@` has no value outside of a section
-	if (sym_IsPC(sym) && !sect_GetSymbolSection()) {
+	// Don't use `isPC`, the pointer might be null!
+	if (sym == PCSymbol && !sect_GetSymbolSection()) {
 		return nullptr;
 	}
 	// `_NARG` has no value outside of a macro
@@ -392,7 +393,7 @@ uint32_t Symbol::getConstantValue() const {
 		return getValue();
 	}
 
-	if (sym_IsPC(this)) {
+	if (isPC()) {
 		assume(getSection()); // There's no way to reach here from outside of a section
 		error("PC does not have a constant value; the current section is not fixed");
 	} else {
