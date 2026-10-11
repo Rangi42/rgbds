@@ -122,6 +122,9 @@ static void failAssert(AssertionType type, std::string const &message) {
 }
 
 void act_Assert(AssertionType type, Expression const &expr, std::string const &message) {
+	if (message.find('\0') != std::string::npos) {
+		fatal("Assertion messages cannot contain '\\0' characters");
+	}
 	if (!expr.isKnown()) {
 		out_CreateAssert(type, expr, message, sect_GetOutputOffset());
 	} else if (expr.value() == 0) {

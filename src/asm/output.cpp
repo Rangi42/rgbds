@@ -163,10 +163,6 @@ void out_CreatePatch(PatchType type, Expression const &expr, uint32_t ofs, uint3
 void out_CreateAssert(
     AssertionType type, Expression const &expr, std::string const &message, uint32_t ofs
 ) {
-	if (message.find('\0') != std::string::npos) {
-		fatal("Assertion messages cannot contain '\\0' characters");
-	}
-
 	Assertion &assertion = assertions.emplace_front();
 	assertion.type = type;
 	assertion.src = fstk_GetFileStack();
