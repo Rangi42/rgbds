@@ -615,7 +615,7 @@ public:
 		for (size_t i = 0; i < dataSize; ++i) {
 			// Flip the bottom bit to get the corresponding row's bitplane 0/1
 			// (This works because the array size is even)
-			uint8_t lhs = data[i], rhs = otherData[(dataSize - 1 - i) ^ 1];
+			uint8_t lhs = data[i], rhs = otherData[(dataSize - i - 1) ^ 1];
 			if (lhs != rhs) {
 				hasVFlip = false;
 			}

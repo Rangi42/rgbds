@@ -111,7 +111,7 @@ static Usage usage = {
         "<file>",
     },
     .options = {
-        {{"-j", "--oam"}, {"convert 8x16 pixel OAM objects instead of 8x8 pixel tiles"}},
+        {{"-j", "--oam"}, {"convert 8x16 px OAM objects instead of 8x8 px tiles"}},
         {{"-m", "--mirror-tiles"}, {"optimize out mirrored tiles"}},
         {{"-o", "--output <path>"}, {"output the tile data to this path"}},
         {{"-t", "--tilemap <path>"}, {"output the tile map to this path"}},
