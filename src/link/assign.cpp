@@ -416,14 +416,16 @@ static void categorizeSection(Section &section) {
 		constraints |= ALIGN_CONSTRAINED;
 	}
 
+	// Insert section while keeping the list sorted by decreasing alignment and size
 	std::deque<Section *> &sections = unassignedSections[constraints];
-
-	// Insert section while keeping the list sorted by decreasing size
-	auto pos = sections.begin();
-	while (pos != sections.end() && (*pos)->size > section.size) {
-		++pos;
-	}
-	sections.insert(pos, &section);
+	auto const compareSections = [](Section const *prev, Section const &sect) {
+		assume(prev->isAlignFixed == sect.isAlignFixed);
+		if (sect.isAlignFixed && prev->alignMask != sect.alignMask) {
+			return prev->alignMask > sect.alignMask;
+		}
+		return prev->size > sect.size;
+	};
+	sections.insert(std::lower_bound(RANGE(sections), section, compareSections), &section);
 }
 
 static void checkOverlayCompat() {
