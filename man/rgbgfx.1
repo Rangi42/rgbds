@@ -45,7 +45,7 @@ convert each of those tiles into 1bpp or 2bpp data, and save all of the tile dat
 (The tiles are all 8\[tmu]8 pixels by default, but can be set to 8\[tmu]16 pixels for use as
 .Dq sprites ;
 see
-.Sx OAM OBJECTS
+.Sx OAM MODE
 below for more details.)
 It also has options to generate a tile map, attribute map, and/or palette set as well; more on that and how the conversion process can be tweaked below.
 .Sh ARGUMENTS
@@ -151,7 +151,7 @@ Both default to 0.
 If
 .Fl j
 is specified, they must also be even numbers; see
-.Sx OAM OBJECTS
+.Sx OAM MODE
 below for more details.
 .It Fl C , Fl \-color-curve
 Modifies the color palettes
@@ -332,7 +332,7 @@ Intended for use with the Game Boy's OAM objects
 .Pq also known as Dq sprites
 in 8\[tmu]16 pixel mode.
 See
-.Sx OAM OBJECTS
+.Sx OAM MODE
 below for more details.
 .It Fl L Ar slice , Fl \-slice Ar slice
 Only process a given rectangle of the image.
@@ -762,43 +762,36 @@ And so are these two:
 $ rgbgfx img/player.png -o build/player.2bpp -O -P
 $ rgbgfx img/player.png -o build/player.2bpp -p build/player.pal
 .Ed
-.Sh OAM OBJECTS
-The Game Boy's OAM entries
+.Sh OAM MODE
+The Game Boy's OAM objects
 .Pq also known as Dq sprites
-can select between 8\[tmu]8 and 8\[tmu]16 pixel tiles; the
-.Fl j
-option makes
-.Nm
-process the latter.
+can be set to 8\[tmu]8 pixel mode or 8\[tmu]16 pixel mode.
+In the 8\[tmu]16 pixel mode, each object uses two consecutive 8\[tmu]8 pixel tiles, stacked vertically as one 8\[tmu]16 pixel unit.
+The hardware ignores the least significant bit of the object's tile ID, so effectively the first tile must have an even ID, and the second tile has the following odd ID.
 .Pp
-An 8\[tmu]16 pixel tile is simply two 8\[tmu]8 pixel tiles stacked vertically, so it is stored as two of them, and it takes up two tile IDs in the
-.Fl t
-and
-.Fl a
-outputs.
 .Nm
-always assigns such IDs in pairs, in the order the objects appear in the image; for example, the first three would get $00, $02, then $04.
-Since only the first ID of each pair is stored, they always start from an even ID; this is why
+supports this mode with the
+.Fl j
+option by processing whole 8\[tmu]16 pixel units as tiles.
+The tile map, attribute map, and palette map output thus have one byte per 8\[tmu]16 pixel tile, since 8\[tmu]16 OAM objects each have one tile ID and one attribute byte.
+In 8\[tmu]16 OAM mode, the tile IDs still refer to the 8\[tmu]8 pixel component tiles, so
 .Fl b
 requires an even base ID.
-The hardware uses the low bit of the OAM entry to pick which half comes first, so the game's own code is what decides that, not
-.Nm .
-.Pp
-Since the objects are twice as large, a VRAM bank only fits half as many of them; see
-.Fl N .
-All the other options work on them as they do on 8\[tmu]8 pixel tiles, with the exception of
-.Fl L ,
-whose height counts 16 pixel tiles.
+The other
+.Nm
+options refer to the 8\[tmu]16 pixel units as tiles.
+Thus, for example,
+the maximum maximum numbers of 8\[tmu]16 pixel tiles for
+.Fl N
+are half as large as for 8\[tmu]8 pixel tiles; the
+.Fl L
+height counts 8\[tmu]16 pixel tiles; and
 .Fl m ,
 .Fl X ,
 .Fl Y
 and
 .Fl u
-all mirror or deduplicate whole 8\[tmu]16 pixel tiles, not their halves.
-.Pp
-Reverse mode
-.Pq see Sx REVERSE MODE
-works on them too, reading each object's first tile ID and treating the following one as its second half.
+deduplicate whole 8\[tmu]16 pixel tiles, not their 8\[tmu]8 pixel halves.
 .Sh REVERSE MODE
 .Nm
 can produce a PNG image from valid data.
