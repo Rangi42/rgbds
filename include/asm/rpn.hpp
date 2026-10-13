@@ -15,6 +15,8 @@
 
 #include "asm/intern.hpp"
 
+extern bool g_DEFER_EVAL;
+
 struct Symbol;
 
 struct RPNValue {

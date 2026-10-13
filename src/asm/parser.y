@@ -1309,11 +1309,11 @@ relocexpr_no_str:
 	| OP_LOGICNOT relocexpr %prec NEG {
 		$$.makeUnaryOp(RPN_LOGNOT, std::move($2));
 	}
-	| relocexpr OP_LOGICOR relocexpr {
-		$$.makeBinaryOp(RPN_LOGOR, std::move($1), $3);
+	| relocexpr OP_LOGICOR { g_DEFER_EVAL = true; } relocexpr { g_DEFER_EVAL = false;
+		$$.makeBinaryOp(RPN_LOGOR, std::move($1), $4);
 	}
-	| relocexpr OP_LOGICAND relocexpr {
-		$$.makeBinaryOp(RPN_LOGAND, std::move($1), $3);
+	| relocexpr OP_LOGICAND { g_DEFER_EVAL = true; } relocexpr { g_DEFER_EVAL = false;
+		$$.makeBinaryOp(RPN_LOGAND, std::move($1), $4);
 	}
 	| relocexpr OP_LOGICEQU relocexpr {
 		$$.makeBinaryOp(RPN_LOGEQ, std::move($1), $3);

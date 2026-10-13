@@ -631,14 +631,26 @@ void RPNValue::appendEncoded(std::vector<uint8_t> &buffer) const {
 	}
 }
 void NumExpr::makeNumber(uint32_t value) {
+    if (!g_DEFER_EVAL) {
+        Expression e; e.makeNumber(value);
+        *this = NumExpr(std::move(e)); return;
+    }
     *this = NumExpr([value]() { Expression e; e.makeNumber(value); return e; });
 }
 
 void NumExpr::makeSymbol(InternedStr symName) {
+    if (!g_DEFER_EVAL) {
+        Expression e; e.makeSymbol(symName);
+        *this = NumExpr(std::move(e)); return;
+    }
     *this = NumExpr([symName]() { Expression e; e.makeSymbol(symName); return e; });
 }
 
 void NumExpr::makeBankSymbol(InternedStr symName) {
+    if (!g_DEFER_EVAL) {
+        Expression e; e.makeBankSymbol(symName);
+        *this = NumExpr(std::move(e)); return;
+    }
     *this = NumExpr([symName]() { Expression e; e.makeBankSymbol(symName); return e; });
 }
 
@@ -675,6 +687,13 @@ void NumExpr::makeUnaryOp(RPNCommand op, NumExpr &&src) {
 void NumExpr::makeBinaryOp(RPNCommand op, NumExpr &&src1, NumExpr const &src2) {
     NumExpr l = std::move(src1);
     NumExpr r = src2;
+    if (!g_DEFER_EVAL) {
+        Expression le = l.eval();
+        Expression re = r.eval();
+        Expression res;
+        res.makeBinaryOp(op, std::move(le), re);
+        *this = NumExpr(std::move(res)); return;
+    }
     if (op == RPN_LOGAND || op == RPN_LOGOR) {
         *this = NumExpr([op, l, r]() mutable {
             Expression le = l.eval();
@@ -722,3 +741,4 @@ void NumExpr::checkNBit(uint8_t n) const {
 void NumExpr::checkSignedNBit(uint8_t n) const {
     eval().checkSignedNBit(n);
 }
+bool g_DEFER_EVAL = false;
