@@ -220,6 +220,8 @@
 %token POP_ENDL "ENDL"
 %token POP_ENDM "ENDM"
 %token POP_ENDR "ENDR"
+%token POP_OPENBLOCK "[:"
+%token POP_CLOSEBLOCK ":]"
 %token POP_ENDSECTION "ENDSECTION"
 %token POP_ENDU "ENDU"
 %token POP_EQU "EQU"
@@ -400,6 +402,8 @@
 %type <std::vector<Expression>> ds_args
 %type <ForArgs> for_args
 %type <std::shared_ptr<MacroArgs>> macro_args
+%type <std::shared_ptr<std::string>> optional_macro_block
+%type <std::shared_ptr<std::string>> block_body
 %type <std::vector<InternedStr>> purge_args
 %type <SectionSpec> sect_attrs
 %type <SectionModifier> sect_mod
@@ -553,14 +557,36 @@ macro_invocation:
 	SYMBOL {
 		// Parsing 'macro_args' will restore the lexer's normal mode
 		lexer_SetMode(LEXER_RAW);
-	} macro_args {
+	} macro_args optional_macro_block {
+		if ($4) {
+			$3->body = $4;
+		}
 		fstk_RunMacro($1, $3, false);
 	}
 	| QMACRO {
 		// Parsing 'macro_args' will restore the lexer's normal mode
 		lexer_SetMode(LEXER_RAW);
-	} macro_args {
+	} macro_args optional_macro_block {
+		if ($4) {
+			$3->body = $4;
+		}
 		fstk_RunMacro($1, $3, true);
+	}
+;
+
+optional_macro_block:
+	%empty {
+		$$ = nullptr;
+	}
+	| POP_OPENBLOCK NEWLINE block_body POP_CLOSEBLOCK {
+		$$ = $3;
+	}
+;
+
+block_body:
+	%empty {
+		Capture block = lexer_CaptureBlock();
+		$$ = std::make_shared<std::string>(block.span.ptr.get(), block.span.size);
 	}
 ;
 

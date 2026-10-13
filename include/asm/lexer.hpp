@@ -103,5 +103,6 @@ struct Capture {
 
 Capture lexer_CaptureRept();
 Capture lexer_CaptureMacro();
+Capture lexer_CaptureBlock();
 
 #endif // RGBDS_ASM_LEXER_HPP

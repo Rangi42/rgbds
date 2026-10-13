@@ -650,7 +650,7 @@ static std::shared_ptr<std::string> readMacroArg() {
 }
 
 int LexerState::peekChar() {
-	// This is `.peekCharAhead()` modified for zero lookahead distance
+	// This is `.lexerState->peekCharAhead()` modified for zero lookahead distance
 	for (Expansion const &exp : expansionStack) {
 		if (exp.offset < exp.size()) {
 			return static_cast<uint8_t>((*exp.contents)[exp.offset]);
@@ -671,7 +671,7 @@ int LexerState::peekCharAhead() {
 
 	for (Expansion const &exp : expansionStack) {
 		// An expansion that has reached its end will have `exp.offset` == `exp.size()`,
-		// and `.peekCharAhead()` will continue with its parent
+		// and `.lexerState->peekCharAhead()` will continue with its parent
 		assume(exp.offset <= exp.size());
 		if (size_t idx = exp.offset + distance; idx < exp.size()) {
 			// Macro args can't be recursive, since `peek()` marks them as scanned, so
@@ -735,6 +735,9 @@ static int peek() {
 }
 
 static void shiftChar() {
+	if (lexerState->capturing && lexerState->expansionScanDistance == 0) {
+		++lexerState->expansionScanDistance;
+	}
 	if (lexerState->capturing) {
 		if (lexerState->captureBuf) {
 			int c = peek();
@@ -1663,7 +1666,11 @@ static Token yylex_NORMAL() {
 
 			// Handle ambiguous 1- or 2-char tokens
 
-		case '[': // Either [ or [[
+		case '[': // Block sigil [: or [ or [[
+			if (peek() == ':') {
+				shiftChar();
+				return Token(T_(POP_OPENBLOCK));
+			}
 			return oneOrTwo('[', T_(LBRACKS), T_(LBRACK));
 
 		case ']': // Either ] or ]]
@@ -1729,7 +1736,11 @@ static Token yylex_NORMAL() {
 			}
 			return oneOrTwo('=', T_(OP_LOGICGE), T_(OP_LOGICGT));
 
-		case ':': // Either :, ::, or an anonymous label ref
+		case ':': // Block sigil :], :, ::, or an anonymous label ref
+			if (peek() == ']') {
+				shiftChar();
+				return Token(T_(POP_CLOSEBLOCK));
+			}
 			c = peek();
 			if (c == '+' || c == '-') {
 				return Token(T_(ANON), readAnonLabelRef(c));
@@ -1877,6 +1888,14 @@ static Token yylex_NORMAL() {
 				}
 			}
 
+			// Expand the special `__BODY__` identifier to a macro's captured block, if any
+			if (token.type == T_(SYMBOL) && identifier.str() == "__BODY__") {
+				if (MacroArgs const *macroArgs = fstk_GetCurrentMacroArgs(); macroArgs && macroArgs->body) {
+					beginExpansion(macroArgs->body, std::nullopt);
+					continue;
+				}
+			}
+
 			// We need to distinguish between:
 			// - label definitions (which are followed by a ':' and use the token `LABEL`)
 			// - quiet macro invocations (which are followed by a '?' and use the token `QMACRO`)
@@ -1969,6 +1988,18 @@ static Token yylex_RAW() {
 			}
 			goto append;
 
+		case '[': // End a macro argument if a block sigil `[:` follows
+			if (lexerState->peekCharAhead() == ':') {
+				if (!str.empty()) {
+					str.erase(str.begin(), std::find_if_not(RANGE(str), isBlankSpace));
+					str.erase(std::find_if_not(RRANGE(str), isBlankSpace).base(), str.end());
+					lexer_SetMode(LEXER_NORMAL);
+					return Token(T_(STRING), str);
+				}
+				lexer_SetMode(LEXER_NORMAL);
+				return yylex_NORMAL();
+			}
+			goto append;
 		case '\\': // Character escape
 			c = nextChar();
 
@@ -2432,4 +2463,140 @@ Capture lexer_CaptureMacro() {
 	return makeCapture("macro definition", [](int tokenType) {
 		return tokenType == T_(POP_ENDM) ? literal_strlen("ENDM") : 0;
 	});
+}
+
+Capture lexer_CaptureBlock() {
+	assume(lexerState->atLineStart);
+	assume(!lexerState->capturing && lexerState->captureBuf == nullptr);
+	lexerState->capturing = true;
+	lexerState->captureSize = 0;
+
+	Capture capture = {
+	    .lineNo = lexer_GetLineNo(), .span = {.ptr = nullptr, .size = 0}
+	};
+	if (lexerState->expansionStack.empty()) {
+		capture.span.ptr = std::shared_ptr<char[]>(
+		    lexerState->content.ptr, &lexerState->content.ptr[lexerState->offset]
+		);
+	} else {
+		assume(lexerState->captureBuf == nullptr);
+		lexerState->captureBuf = std::make_shared<std::vector<char>>();
+		assume(capture.span.ptr == nullptr);
+	}
+
+	nextLine();
+
+	Defer reenableExpansions = scopedDisableExpansions();
+	int depth = 0;
+	for (;;) {
+		int c = peek();
+		if (c == EOF) {
+			error("Unterminated macro block");
+			break;
+		}
+
+		// Handle double-quoted strings
+		if (c == '"') {
+			shiftChar();
+			for (;;) {
+				int cc = peek();
+				if (cc == EOF || isNewline(cc)) {
+					break;
+				}
+				if (cc == '\\') {
+					shiftChar();
+					shiftChar();
+					continue;
+				}
+				if (cc == '"') {
+					shiftChar();
+					break;
+				}
+				shiftChar();
+			}
+			continue;
+		}
+		// Handle character literals
+		if (c == '\'') {
+			shiftChar();
+			for (;;) {
+				int cc = peek();
+				if (cc == EOF || isNewline(cc)) {
+					break;
+				}
+				if (cc == '\\') {
+					shiftChar();
+					shiftChar();
+					continue;
+				}
+				if (cc == '\'') {
+					shiftChar();
+					break;
+				}
+				shiftChar();
+			}
+			continue;
+		}
+		// Line comments
+		if (c == ';') {
+			while (c != EOF && !isNewline(c)) {
+				shiftChar();
+				c = peek();
+			}
+			continue;
+		}
+		// Block comments
+		if (c == '/' && lexerState->peekCharAhead() == '*') {
+			shiftChar();
+			shiftChar();
+			for (;;) {
+				int cc = peek();
+				if (cc == EOF) {
+					break;
+				}
+				if (cc == '*' && lexerState->peekCharAhead() == '/') {
+					shiftChar();
+					shiftChar();
+					break;
+				}
+				shiftChar();
+			}
+			continue;
+		}
+
+		if (c == '[' && lexerState->peekCharAhead() == ':') {
+			++depth;
+			shiftChar();
+			shiftChar();
+			continue;
+		}
+		if (c == ':' && lexerState->peekCharAhead() == ']') {
+			if (depth == 0) {
+				break;
+			}
+			--depth;
+			shiftChar();
+			shiftChar();
+			continue;
+		}
+		if (isNewline(c)) {
+			shiftChar();
+			if (c == '\r' && peek() == '\n') {
+				shiftChar();
+			}
+			nextLine();
+			continue;
+		}
+		shiftChar();
+	}
+
+	if (!capture.span.ptr) {
+		capture.span.ptr =
+		    std::shared_ptr<char[]>(lexerState->captureBuf, lexerState->captureBuf->data());
+	}
+	capture.span.size = lexerState->captureSize;
+
+	lexerState->capturing = false;
+	lexerState->captureBuf = nullptr;
+	return capture;
 }

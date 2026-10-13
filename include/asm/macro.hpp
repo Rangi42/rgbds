@@ -11,6 +11,7 @@
 struct MacroArgs {
 	uint32_t shift;
 	std::vector<std::shared_ptr<std::string>> args;
+	std::shared_ptr<std::string> body;
 
 	uint32_t nbArgs() const { return args.size() - shift; }
 	std::shared_ptr<std::string> getArg(int32_t num) const;
