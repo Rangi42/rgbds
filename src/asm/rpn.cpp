@@ -630,3 +630,95 @@ void RPNValue::appendEncoded(std::vector<uint8_t> &buffer) const {
 		break;
 	}
 }
+void NumExpr::makeNumber(uint32_t value) {
+    *this = NumExpr([value]() { Expression e; e.makeNumber(value); return e; });
+}
+
+void NumExpr::makeSymbol(InternedStr symName) {
+    *this = NumExpr([symName]() { Expression e; e.makeSymbol(symName); return e; });
+}
+
+void NumExpr::makeBankSymbol(InternedStr symName) {
+    *this = NumExpr([symName]() { Expression e; e.makeBankSymbol(symName); return e; });
+}
+
+void NumExpr::makeBankSection(std::string const &sectName) {
+    *this = NumExpr([sectName]() { Expression e; e.makeBankSection(sectName); return e; });
+}
+
+void NumExpr::makeSizeOfSection(std::string const &sectName) {
+    *this = NumExpr([sectName]() { Expression e; e.makeSizeOfSection(sectName); return e; });
+}
+
+void NumExpr::makeStartOfSection(std::string const &sectName) {
+    *this = NumExpr([sectName]() { Expression e; e.makeStartOfSection(sectName); return e; });
+}
+
+void NumExpr::makeSizeOfSectionType(SectionType type) {
+    *this = NumExpr([type]() { Expression e; e.makeSizeOfSectionType(type); return e; });
+}
+
+void NumExpr::makeStartOfSectionType(SectionType type) {
+    *this = NumExpr([type]() { Expression e; e.makeStartOfSectionType(type); return e; });
+}
+
+void NumExpr::makeUnaryOp(RPNCommand op, NumExpr &&src) {
+    NumExpr s = std::move(src);
+    *this = NumExpr([op, s]() mutable {
+        Expression e = s.eval();
+        Expression r;
+        r.makeUnaryOp(op, std::move(e));
+        return r;
+    });
+}
+
+void NumExpr::makeBinaryOp(RPNCommand op, NumExpr &&src1, NumExpr const &src2) {
+    NumExpr l = std::move(src1);
+    NumExpr r = src2;
+    if (op == RPN_LOGAND || op == RPN_LOGOR) {
+        *this = NumExpr([op, l, r]() mutable {
+            Expression le = l.eval();
+            if (op == RPN_LOGAND && le.isKnown() && le.value() == 0) {
+                Expression z; z.makeNumber(0); return z;
+            }
+            if (op == RPN_LOGOR && le.isKnown() && le.value() != 0) {
+                Expression z; z.makeNumber(1); return z;
+            }
+            Expression re = r.eval();
+            Expression res;
+            res.makeBinaryOp(op, std::move(le), re);
+            return res;
+        });
+    } else {
+        *this = NumExpr([op, l, r]() mutable {
+            Expression le = l.eval();
+            Expression re = r.eval();
+            Expression res;
+            res.makeBinaryOp(op, std::move(le), re);
+            return res;
+        });
+    }
+}
+
+void NumExpr::addCheckHRAM() {
+    NumExpr self = *this;
+    *this = NumExpr([self]() mutable { Expression e = self.eval(); e.addCheckHRAM(); return e; });
+}
+
+void NumExpr::addCheckRST() {
+    NumExpr self = *this;
+    *this = NumExpr([self]() mutable { Expression e = self.eval(); e.addCheckRST(); return e; });
+}
+
+void NumExpr::addCheckBitIndex(uint8_t mask) {
+    NumExpr self = *this;
+    *this = NumExpr([self, mask]() mutable { Expression e = self.eval(); e.addCheckBitIndex(mask); return e; });
+}
+
+void NumExpr::checkNBit(uint8_t n) const {
+    eval().checkNBit(n);
+}
+
+void NumExpr::checkSignedNBit(uint8_t n) const {
+    eval().checkSignedNBit(n);
+}

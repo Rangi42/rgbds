@@ -333,14 +333,14 @@
 /******************** Data types ********************/
 
 // RPN expressions
-%type <Expression> relocexpr
+%type <NumExpr> relocexpr
 // `relocexpr_no_str` exists because strings usually count as numeric expressions, but some
 // contexts treat numbers and strings differently, e.g. `db "string"` or `print "string"`.
-%type <Expression> relocexpr_no_str
-%type <Expression> reloc_3bit
-%type <Expression> reloc_8bit
-%type <Expression> reloc_16bit
-%type <Expression> reloc_8bit_signed
+%type <NumExpr> relocexpr_no_str
+%type <NumExpr> reloc_3bit
+%type <NumExpr> reloc_8bit
+%type <NumExpr> reloc_16bit
+%type <NumExpr> reloc_8bit_signed
 
 // Constant numbers
 %type <int32_t> iconst
@@ -352,9 +352,9 @@
 %type <int32_t> shift_const
 
 // Strings
-%type <std::string> string
-%type <std::string> string_literal
-%type <std::string> strcat_args
+%type <StrExpr> string
+%type <StrExpr> string_literal
+%type <StrExpr> strcat_args
 // Strings used for identifiers
 %type <InternedStr> def_id
 %type <InternedStr> redef_id
@@ -385,10 +385,10 @@
 %type <int32_t> reg_bc_or_de
 %type <int32_t> ccode_expr
 %type <int32_t> ccode
-%type <Expression> op_a_n
+%type <NumExpr> op_a_n
 %type <int32_t> op_a_r
-%type <Expression> op_mem_ind
-%type <Expression> op_sp_offset
+%type <NumExpr> op_mem_ind
+%type <NumExpr> op_sp_offset
 
 // Data types used only in specific contexts
 %type <AlignmentSpec> align_spec
@@ -729,13 +729,13 @@ endsection:
 
 fail:
 	POP_FAIL string {
-		fatal("%s", $2.c_str());
+		fatal("%s", $2.eval().c_str());
 	}
 ;
 
 warn:
 	POP_WARN string {
-		warning(WARNING_USER, "%s", $2.c_str());
+		warning(WARNING_USER, "%s", $2.eval().c_str());
 	}
 ;
 
@@ -1128,7 +1128,7 @@ print_expr:
 	}
 	| string_literal {
 		// Allow printing NUL characters
-		fwrite($1.data(), 1, $1.length(), stdout);
+		fwrite($1.eval().data(), 1, $1.eval().length(), stdout);
 	}
 	| scoped_sym {
 		handleSymbolByType(
@@ -1301,10 +1301,10 @@ relocexpr_no_str:
 		$$.makeNumber(act_CharToNum($1));
 	}
 	| string OP_STREQU string {
-		$$.makeNumber($1.compare($3) == 0);
+		$$.makeNumber($1.eval().compare($3) == 0);
 	}
 	| string OP_STRNE string {
-		$$.makeNumber($1.compare($3) != 0);
+		$$.makeNumber($1.eval().compare($3) != 0);
 	}
 	| OP_LOGICNOT relocexpr %prec NEG {
 		$$.makeUnaryOp(RPN_LOGNOT, std::move($2));
@@ -1470,31 +1470,31 @@ relocexpr_no_str:
 		$$.makeNumber(fix_ATan2($3, $5, $6));
 	}
 	| OP_STRCMP LPAREN string COMMA string RPAREN {
-		$$.makeNumber($3.compare($5));
+		$$.makeNumber($3.eval().compare($5));
 	}
 	| OP_STRFIND LPAREN string COMMA string RPAREN {
-		size_t pos = $3.find($5);
+		size_t pos = $3.eval().find($5);
 		$$.makeNumber(pos != std::string::npos ? pos : -1);
 	}
 	| OP_STRRFIND LPAREN string COMMA string RPAREN {
-		size_t pos = $3.rfind($5);
+		size_t pos = $3.eval().rfind($5);
 		$$.makeNumber(pos != std::string::npos ? pos : -1);
 	}
 	| OP_STRIN LPAREN string COMMA string RPAREN {
 		warning(WARNING_OBSOLETE, "`STRIN` is deprecated; use 0-indexed `STRFIND` instead");
-		size_t pos = $3.find($5);
+		size_t pos = $3.eval().find($5);
 		$$.makeNumber(pos != std::string::npos ? pos + 1 : 0);
 	}
 	| OP_STRRIN LPAREN string COMMA string RPAREN {
 		warning(WARNING_OBSOLETE, "`STRRIN` is deprecated; use 0-indexed `STRRFIND` instead");
-		size_t pos = $3.rfind($5);
+		size_t pos = $3.eval().rfind($5);
 		$$.makeNumber(pos != std::string::npos ? pos + 1 : 0);
 	}
 	| OP_STRLEN LPAREN string RPAREN {
 		$$.makeNumber(act_StringLen($3, true));
 	}
 	| OP_BYTELEN LPAREN string RPAREN {
-		$$.makeNumber($3.length());
+		$$.makeNumber($3.eval().length());
 	}
 	| OP_CHARLEN LPAREN string RPAREN {
 		$$.makeNumber(act_CharLen($3));
@@ -1503,12 +1503,12 @@ relocexpr_no_str:
 		$$.makeNumber(charmap_HasChar($3));
 	}
 	| OP_CHARCMP LPAREN string COMMA string RPAREN {
-		$$.makeNumber(act_CharCmp($3, $5));
+		$$.makeNumber(act_CharCmp($3.eval(), $5.eval()));
 	}
 	| OP_CHARSIZE LPAREN string RPAREN {
 		size_t charSize = charmap_CharSize($3);
 		if (charSize == 0) {
-			::error("CHARSIZE: No character mapping for \"%s\"", $3.c_str());
+			::error("CHARSIZE: No character mapping for \"%s\"", $3.eval().c_str());
 		}
 		$$.makeNumber(charSize);
 	}
@@ -1556,75 +1556,89 @@ precision_arg:
 
 string_literal:
 	STRING {
-		$$ = std::move($1);
+		$$ = StrExpr([s = std::move($1)]() { return s; });
 	}
 	| string OP_CAT string {
-		$$ = std::move($1);
-		$$.append($3);
+		$$ = StrExpr([a = $1, b = $3]() mutable {
+			std::string r = a.eval();
+			r.append(b.eval());
+			return r;
+		});
 	}
 	| OP_READFILE LPAREN string RPAREN {
-		if (std::optional<std::string> contents = act_ReadFile($3, UINT32_MAX); contents) {
-			$$ = std::move(*contents);
+		if (std::optional<std::string> contents = act_ReadFile($3.eval(), UINT32_MAX); contents) {
+			$$ = StrExpr([c = std::move(*contents)]() { return c; });
 		} else {
 			YYACCEPT;
 		}
 	}
 	| OP_READFILE LPAREN string COMMA uconst RPAREN {
-		if (std::optional<std::string> contents = act_ReadFile($3, $5); contents) {
-			$$ = std::move(*contents);
+		if (std::optional<std::string> contents = act_ReadFile($3.eval(), $5); contents) {
+			$$ = StrExpr([c = std::move(*contents)]() { return c; });
 		} else {
 			YYACCEPT;
 		}
 	}
 	| OP_STRSLICE LPAREN string COMMA iconst COMMA iconst RPAREN {
-		$$ = act_StringSlice($3, $5, $7);
+		$$ = StrExpr([s = $3, a = $5, b = $7]() mutable { return act_StringSlice(s.eval(), a, b); });
 	}
 	| OP_STRSLICE LPAREN string COMMA iconst RPAREN {
-		$$ = act_StringSlice($3, $5, std::nullopt);
+		$$ = StrExpr([s = $3, a = $5]() mutable { return act_StringSlice(s.eval(), a, std::nullopt); });
 	}
 	| OP_STRSUB LPAREN string COMMA iconst COMMA uconst RPAREN {
-		$$ = act_StringSub($3, $5, $7);
+		$$ = StrExpr([s = $3, a = $5, b = $7]() mutable { return act_StringSub(s.eval(), a, b); });
 	}
 	| OP_STRSUB LPAREN string COMMA iconst RPAREN {
-		$$ = act_StringSub($3, $5, std::nullopt);
+		$$ = StrExpr([s = $3, a = $5]() mutable { return act_StringSub(s.eval(), a, std::nullopt); });
 	}
 	| OP_STRCHAR LPAREN string COMMA iconst RPAREN {
-		$$ = act_StringChar($3, $5);
+		$$ = StrExpr([s = $3, a = $5]() mutable { return act_StringChar(s.eval(), a); });
 	}
 	| OP_CHARSUB LPAREN string COMMA iconst RPAREN {
-		$$ = act_CharSub($3, $5);
+		$$ = StrExpr([s = $3, a = $5]() mutable { return act_CharSub(s.eval(), a); });
 	}
 	| OP_REVCHAR LPAREN charmap_args RPAREN {
 		bool unique;
-		$$ = charmap_Reverse($3, unique);
+		std::string r = charmap_Reverse($3, unique);
 		if (!unique) {
 			::error("REVCHAR: Multiple character mappings to values");
-		} else if ($$.empty()) {
+		} else if (r.empty()) {
 			::error("REVCHAR: No character mapping to values");
 		}
+		$$ = StrExpr([r]() { return r; });
 	}
 	| OP_STRCAT LPAREN RPAREN {
-		$$.clear();
+		$$ = StrExpr([]() { return std::string(); });
 	}
 	| OP_STRCAT LPAREN strcat_args RPAREN {
 		$$ = std::move($3);
 	}
 	| OP_STRUPR LPAREN string RPAREN {
-		$$ = std::move($3);
-		std::transform(RANGE($$), $$.begin(), toUpper);
+		$$ = StrExpr([s = $3]() mutable {
+			std::string r = s.eval();
+			std::transform(RANGE(r), r.begin(), toUpper);
+			return r;
+		});
 	}
 	| OP_STRLWR LPAREN string RPAREN {
-		$$ = std::move($3);
-		std::transform(RANGE($$), $$.begin(), toLower);
+		$$ = StrExpr([s = $3]() mutable {
+			std::string r = s.eval();
+			std::transform(RANGE(r), r.begin(), toLower);
+			return r;
+		});
 	}
 	| OP_STRRPL LPAREN string COMMA string COMMA string RPAREN {
-		$$ = act_StringReplace($3, $5, $7);
+		$$ = StrExpr([a = $3, b = $5, c = $7]() mutable {
+			return act_StringReplace(a.eval(), b.eval(), c.eval());
+		});
 	}
 	| OP_STRFMT LPAREN strfmt_args RPAREN {
-		$$ = act_StringFormat($3.format, $3.args);
+		$$ = StrExpr([fmt = std::move($3)]() mutable {
+			return act_StringFormat(fmt.format, fmt.args);
+		});
 	}
 	| POP_SECTION LPAREN scoped_sym RPAREN {
-		$$ = act_SectionName($3);
+		$$ = StrExpr([name = $3]() mutable { return act_SectionName(name); });
 	}
 ;
 
@@ -1633,11 +1647,13 @@ string:
 		$$ = std::move($1);
 	}
 	| scoped_sym {
-		if (Symbol *sym = sym_FindScopedSymbol($1); sym && sym->type == SYM_EQUS) {
-			$$ = *sym->getEqus();
-		} else {
-			::error("`%s` is not a string symbol", $1.c_str());
-		}
+		$$ = StrExpr([name = $1]() mutable {
+			if (Symbol *sym = sym_FindScopedSymbol(name); sym && sym->type == SYM_EQUS) {
+				return *sym->getEqus();
+			}
+			::error("`%s` is not a string symbol", name.c_str());
+			return std::string();
+		});
 	}
 ;
 
@@ -1646,8 +1662,11 @@ strcat_args:
 		$$ = std::move($1);
 	}
 	| strcat_args COMMA string {
-		$$ = std::move($1);
-		$$.append($3);
+		$$ = StrExpr([a = $1, b = $3]() mutable {
+			std::string r = a.eval();
+			r.append(b.eval());
+			return r;
+		});
 	}
 ;
 
