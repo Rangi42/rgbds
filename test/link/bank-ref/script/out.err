@@ -1,0 +1,3 @@
+error: The linker script cannot place section "Bk" in a specific bank, as its bank is specified as `BANK = BANK(`Alpha`)`
+    at bank-ref/script/script.link(2)
+Linking failed with 1 error

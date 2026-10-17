@@ -4,6 +4,7 @@
 #define RGBDS_LINK_SECTION_HPP
 
 #include <memory>
+#include <optional>
 #include <stdint.h>
 #include <string>
 #include <vector>
@@ -46,6 +47,7 @@ struct Section {
 	bool isAlignFixed;
 	uint16_t alignMask;
 	uint16_t alignOfs;
+	std::optional<SectionBankRel> bankRel; // `BANK = BANK(other) + offset`, if specified
 	FileStackNode const *src;
 	int32_t lineNo;
 	std::vector<uint8_t> data; // Array of size `size`, or 0 if `type` does not have data
@@ -54,6 +56,8 @@ struct Section {
 	std::vector<Symbol> *fileSymbols;
 	std::vector<Symbol *> symbols;
 	std::unique_ptr<Section> nextPiece; // The next fragment or union "piece" of this section
+	Section *bankRelBase = nullptr; // The section whose bank this one's depends on, if pending
+	bool isAssigned = false;
 
 	SectionTypeInfo const &typeInfo() const { return sectionTypeInfo[type]; }
 

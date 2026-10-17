@@ -1,0 +1,3 @@
+SECTION "Ldr", ROMX
+
+SECTION "Wr", WRAMX, BANK = BANK("Ldr")

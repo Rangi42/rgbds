@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "helpers.hpp"
@@ -280,6 +281,7 @@ static void assignSection(Section &section, MemoryLocation const &location) {
 	for (Section &piece : section.pieces()) {
 		piece.org = location.address;
 		piece.bank = location.bank;
+		piece.isAssigned = true;
 	}
 	out_AddSection(section);
 }
@@ -386,6 +388,226 @@ static void placeSection(Section &section) {
 
 static std::deque<Section *> unassignedSections;
 
+// Bank constraints of the form `BANK = BANK(other) + N` ("bank references")
+//
+// Such sections cannot simply be placed by the first-fit algorithm above, since their bank is
+// not their own: it follows another section's. The idea is to place the section a reference
+// points to (its "leader") normally, and then fix the referencing section's ("dependent")
+// bank to the leader's bank plus the reference's offset. Dependents are placed immediately
+// after their leader: this way, whichever sections would compete with them for space in the
+// bank cannot steal it first (which would make the dependent harder to place, for they
+// *cannot* look elsewhere). Sections that transitively depend on each other are processed
+// recursively, so whole chains of dependent sections can follow each other. Cycles and other
+// unsatisfiable references are detected and rejected before any placement is attempted.
+static std::unordered_map<Section *, std::vector<Section *>> dependentsOf;
+
+// Cycle detection state, for DFS over bank reference edges
+enum BankRelVisitState { BANK_REL_NEW, BANK_REL_ON_CHAIN, BANK_REL_DONE };
+static std::unordered_map<Section *, BankRelVisitState> bankRelStates;
+
+// Resolves the section that a dependents's bank depends on, checking that the reference can
+// be satisfied at least in principle; fatals otherwise.
+static Section &referentOfBankRel(Section const &section) {
+	if (section.bankRel->kind == BANKREL_SYMBOL) {
+		if (Symbol *symbol = sym_GetSymbol(section.bankRel->name); !symbol) {
+			if (sym_HasLocalAliases(section.bankRel->name)) {
+				fatalAt(
+				    section,
+				    "Section \"%s\"'s bank depends on symbol `%s`, but it is not exported "
+				    "(labels referenced through `BANK = BANK()` must be exported)",
+				    section.name.c_str(),
+				    section.bankRel->name.c_str()
+				);
+			}
+			fatalAt(
+			    section,
+			    "Section \"%s\"'s bank depends on undefined symbol `%s`",
+			    section.name.c_str(),
+			    section.bankRel->name.c_str()
+			);
+		} else if (Label *label = std::get_if<Label>(&symbol->data); !label) {
+			fatalAt(
+			    section,
+			    "Section \"%s\"'s bank depends on `%s`, which is not a label",
+			    section.name.c_str(),
+			    section.bankRel->name.c_str()
+			);
+		} else if (!label->section) {
+			fatalAt(
+			    section,
+			    "Section \"%s\"'s bank depends on label `%s`, which is not defined in any "
+			    "section",
+			    section.name.c_str(),
+			    section.bankRel->name.c_str()
+			);
+		} else {
+			return *label->section;
+		}
+	}
+
+	if (Section *referent = sect_GetSection(section.bankRel->name); !referent) {
+		fatalAt(
+		    section,
+		    "Section \"%s\"'s bank depends on undefined section \"%s\"",
+		    section.name.c_str(),
+		    section.bankRel->name.c_str()
+		);
+	} else {
+		return *referent;
+	}
+}
+
+// DFS traversal over a section's whole bank reference chain, to check that it isn't cyclic.
+static void visitBankRelChain(Section &section) {
+	switch (bankRelStates[&section]) {
+	case BANK_REL_DONE:
+		return;
+
+	case BANK_REL_ON_CHAIN: {
+		// The DFS reached a node it is currently walking, so we ran into a cycle.
+		// Report it by walking the chain back around, up to the section where it closes.
+		std::string cycle = "\"" + section.name + "\"";
+		Section *cur = &section;
+		while ((cur = cur->bankRelBase) != &section) {
+			cycle += " -> \"";
+			cycle += cur->name;
+			cycle += "\"";
+		}
+		cycle += " -> \"";
+		cycle += section.name;
+		cycle += "\"";
+
+		fatal("Section banks form a cycle: %s", cycle.c_str());
+	}
+
+	case BANK_REL_NEW:
+		bankRelStates[&section] = BANK_REL_ON_CHAIN;
+		if (section.bankRelBase) {
+			visitBankRelChain(*section.bankRelBase);
+		}
+		bankRelStates[&section] = BANK_REL_DONE;
+		return;
+	}
+}
+
+// Fixes the dependent's bank to the (known) one of the section it depends on, plus the
+// reference's offset.
+static void fixBankRelativeTo(Section &dependent, Section const &leader) {
+	SectionTypeInfo const &typeInfo = dependent.typeInfo();
+	int64_t bank = static_cast<int64_t>(leader.bank) + dependent.bankRel->offset;
+
+	// The offset was checked to be within the memory region's number of banks, but the
+	// leader's bank being exactly at a region's edge can still push this section's bank out
+	// of bounds; there is nothing more we can do about that than report the conflict.
+	if (bank < typeInfo.firstBank || bank > typeInfo.lastBank) {
+		fatalAt(
+		    dependent,
+		    "Section \"%s\"'s bank depends on that of \"%s\" (bank %" PRIu32 "), plus %" PRId32
+		    ", which would be bank %" PRId64 ", but %s does not have one",
+		    dependent.name.c_str(),
+		    leader.name.c_str(),
+		    leader.bank,
+		    dependent.bankRel->offset,
+		    bank,
+		    typeInfo.name
+		);
+	}
+
+	dependent.isBankFixed = true;
+	dependent.bank = static_cast<uint32_t>(bank);
+	dependent.bankRelBase = nullptr; // Its bank no longer needs to follow anyone's
+}
+
+// Fixes the section's bank to its chain leader's, if that one's bank is already known (or
+// transitively can be made known).
+static void foldBankRelIfKnown(Section &section) {
+	Section *leader = section.bankRelBase;
+	if (!leader) {
+		return;
+	}
+
+	foldBankRelIfKnown(*leader);
+	if (leader->isBankFixed) {
+		fixBankRelativeTo(section, *leader);
+	}
+}
+
+// Resolves all bank references: checks that they are well-formed and satisfiable, folds the
+// bank of any dependent whose leader's bank is already fixed, and registers the rest so that
+// their placement can follow their leader's.
+static void resolveBankRels() {
+	for (Section *section : unassignedSections) {
+		if (section->bankRel && section->bankRel->kind != BANKREL_NONE) {
+			SectionBankRel const &rel = *section->bankRel;
+
+			section->bankRelBase = &referentOfBankRel(*section);
+
+			// Accounts for sections in different types of memories referencing each other.
+			if (section->bankRelBase->type != section->type) {
+				fatalTwoAt(
+				    *section,
+				    *section->bankRelBase,
+				    "Section \"%s\" is a %s section, so its bank cannot depend on that of "
+				    "\"%s\", which is a %s section",
+				    section->name.c_str(),
+				    section->typeInfo().name,
+				    section->bankRelBase->name.c_str(),
+				    section->bankRelBase->typeInfo().name
+				);
+			}
+
+			// Detects unconditionally impossible offsets, e.g. `BANK(other) + 999999`: even
+			// with the leader's bank at either end of the range, the dependent's bank would
+			// never land in range.
+			SectionTypeInfo const &typeInfo = section->typeInfo();
+			int64_t span = typeInfo.lastBank - typeInfo.firstBank;
+			if (int64_t offset = rel.offset; offset > span || offset < -span) {
+				fatalAt(
+				    *section,
+				    "Section \"%s\"'s bank depends on BANK(%s) with offset %" PRId32
+				    ", but %s only has %" PRIu32 " banks",
+				    section->name.c_str(),
+				    describeBankRel(rel).c_str(),
+				    rel.offset,
+				    typeInfo.name,
+				    typeInfo.nbBanks()
+				);
+			}
+		}
+	}
+
+	for (Section *section : unassignedSections) {
+		if (section->bankRelBase) {
+			visitBankRelChain(*section);
+		}
+	}
+
+	for (Section *section : unassignedSections) {
+		foldBankRelIfKnown(*section);
+	}
+
+	// The remaining dependents are placed as their leader's bank becomes known; keep them
+	// sorted as per the main list, so that the whole chain is placed well.
+	for (Section *section : unassignedSections) {
+		if (section->bankRelBase) {
+			dependentsOf[section->bankRelBase].push_back(section);
+		}
+	}
+}
+
+// Assigns all sections that depend on the given one's bank (transitively). Its bank must be
+// known, i.e. the section must have been assigned.
+static void placeBankDependents(Section &leader) {
+	if (auto const search = dependentsOf.find(&leader); search != dependentsOf.end()) {
+		for (Section *dependent : search->second) {
+			// Now that the leader is assigned, the dependent's bank is simply known.
+			fixBankRelativeTo(*dependent, leader);
+			placeSection(*dependent);
+			placeBankDependents(*dependent);
+		}
+	}
+}
+
 // Categorize a section depending on how constrained it is.
 // This is so the most-constrained sections are placed first.
 static void categorizeSection(Section &section) {
@@ -432,10 +654,15 @@ static void checkOverlayCompat() {
 		unfixedList += "\n- \"";
 		unfixedList += section->name;
 		unfixedList += "\" (";
+		std::string bankDesc =
+		    section->bankRel && section->bankRel->kind != BANKREL_NONE
+		        ? "bank (it depends on another section's)"
+		        : "bank";
 		if (!section->isBankFixed && !section->isAddressFixed) {
-			unfixedList += "bank and address";
+			unfixedList += bankDesc;
+			unfixedList += " and address";
 		} else if (!section->isBankFixed) {
-			unfixedList += "bank";
+			unfixedList += bankDesc;
 		} else {
 			assume(!section->isAddressFixed);
 			unfixedList += "address";
@@ -481,13 +708,23 @@ void assign_AssignSections() {
 	// Generate sorted list of sections to assign
 	sect_ForEach(categorizeSection);
 
+	// Check that all bank references (`BANK = BANK(other) + N`) are satisfiable, and fold the
+	// bank of those that can be resolved up front
+	resolveBankRels();
+
 	// Overlaying requires only fully-constrained sections
 	if (options.overlayFileName) {
 		checkOverlayCompat();
 	}
 
+	// Sections whose bank depends on another section's are not placed here: they run out of
+	// space otherwise, as their placement may only follow their dependency's.
 	// Assign sections in the order they were sorted
 	for (Section *section : unassignedSections) {
+		if (section->isAssigned || section->bankRelBase) {
+			continue;
+		}
 		placeSection(*section);
+		placeBankDependents(*section);
 	}
 }

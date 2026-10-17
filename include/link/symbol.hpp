@@ -44,6 +44,10 @@ void sym_AddSymbol(Symbol &symbol);
 // Finds a symbol in all the defined symbols.
 Symbol *sym_GetSymbol(std::string const &name);
 
+// Returns whether one or more symbols with this name are defined but not exported.
+// (Separated, so that error messages can diagnose a "local alias" situation.)
+bool sym_HasLocalAliases(std::string const &name);
+
 void sym_TraceLocalAliasedSymbols(std::string const &name);
 
 #endif // RGBDS_LINK_SYMBOL_HPP

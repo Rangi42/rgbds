@@ -65,6 +65,11 @@ Symbol *sym_GetSymbol(std::string const &name) {
 	return search != symbols.end() ? search->second : nullptr;
 }
 
+bool sym_HasLocalAliases(std::string const &name) {
+	auto search = localSymbols.find(name);
+	return search != localSymbols.end() && !search->second.empty();
+}
+
 void sym_TraceLocalAliasedSymbols(std::string const &name) {
 	std::vector<Symbol *> const &locals = localSymbols[name];
 	if (locals.empty()) {

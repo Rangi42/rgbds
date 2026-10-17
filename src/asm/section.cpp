@@ -280,6 +280,7 @@ static void mergeSections(
     uint32_t bank,
     uint8_t alignment,
     uint16_t alignOffset,
+    std::optional<SectionBankRel> const &bankRel,
     SectionModifier mod
 ) {
 	sectErrors.clear();
@@ -315,26 +316,58 @@ static void mergeSections(
 				);
 			}
 
-			void (*merge)(Section &, uint32_t, uint8_t, uint16_t) =
-			    mod == SECTION_UNION ? mergeSectUnion : mergeFragments;
-			merge(sect, org, alignment, alignOffset);
+		void (*merge)(Section &, uint32_t, uint8_t, uint16_t) =
+		    mod == SECTION_UNION ? mergeSectUnion : mergeFragments;
+		merge(sect, org, alignment, alignOffset);
 
-			// If the section's bank is unspecified, override it
-			if (sect.bank == UINT32_MAX) {
-				sect.bank = bank;
+		// If the section's bank is unspecified, override it; if both specify their bank, it
+		// must be the same one.
+		// Fixed banks (given as `BANK[42]`) cannot be merged with bank references
+		// (`BANK = BANK(other) + N`).
+		if (sect.bankRel) {
+			if (bankRel) {
+				if (*sect.bankRel != *bankRel) {
+					sectError(
+					    "Section \"%s\" already declared as `BANK = BANK(%s)`, but also as "
+					    "`BANK = BANK(%s)`",
+					    sect.name.c_str(),
+					    describeBankRel(*sect.bankRel).c_str(),
+					    describeBankRel(*bankRel).c_str()
+					);
+				}
+			} else if (bank != UINT32_MAX) {
+				sectError(
+				    "Section \"%s\" already declared as `BANK = BANK(%s)`, but also with bank "
+				    "%" PRIu32,
+				    sect.name.c_str(),
+				    describeBankRel(*sect.bankRel).c_str(),
+				    bank
+				);
 			}
-			// If both specify a bank, it must be the same one
-			else if (bank != UINT32_MAX && sect.bank != bank) {
+		} else if (sect.bank != UINT32_MAX) {
+			if (bankRel) {
+				sectError(
+				    "Section \"%s\" already declared with bank %" PRIu32 ", but also as "
+				    "`BANK = BANK(%s)`",
+				    sect.name.c_str(),
+				    sect.bank,
+				    describeBankRel(*bankRel).c_str()
+				);
+			} else if (bank != UINT32_MAX && sect.bank != bank) {
 				sectError(
 				    "Section \"%s\" already declared with different bank %" PRIu32,
 				    sect.name.c_str(),
 				    sect.bank
 				);
 			}
-			break;
+		} else {
+			sect.bank = bank;
+			sect.bankRel = bankRel;
 		}
-		}
+		break;
 	}
+	}
+}
 
 	if (size_t nbSectErrors = sectErrors.size(); nbSectErrors == 1) {
 		// If there was only one error, print it as a fatal error
@@ -360,6 +393,7 @@ static Section *createSection(
     uint32_t bank,
     uint8_t alignment,
     uint16_t alignOffset,
+    std::optional<SectionBankRel> const &bankRel,
     SectionModifier mod
 ) {
 	// Add the new section to the list
@@ -373,6 +407,7 @@ static Section *createSection(
 	sect.size = 0;
 	sect.org = org;
 	sect.bank = bank;
+	sect.bankRel = bankRel;
 	sect.align = alignment;
 	sect.alignOfs = alignOffset;
 	sect.cyclesCounter = 0;
@@ -399,6 +434,7 @@ static Section *createSectionFragmentLiteral(Section const &parent) {
 	sect.size = 0;
 	sect.org = UINT32_MAX;
 	sect.bank = parent.bank == 0 ? UINT32_MAX : parent.bank;
+	sect.bankRel = parent.bankRel;
 	sect.align = 0;
 	sect.alignOfs = 0;
 	sect.cyclesCounter = 0;
@@ -420,6 +456,7 @@ static Section *getSection(
     SectionModifier mod
 ) {
 	uint32_t bank = attrs.bank;
+	std::optional<SectionBankRel> const &bankRel = attrs.bankRel;
 	uint8_t alignment = attrs.alignment;
 	uint16_t alignOffset = attrs.alignOfs;
 
@@ -442,6 +479,11 @@ static Section *getSection(
 			    typeInfo.firstBank,
 			    typeInfo.lastBank
 			);
+		}
+	} else if (bankRel) {
+		if (type != SECTTYPE_ROMX && type != SECTTYPE_VRAM && type != SECTTYPE_SRAM
+		    && type != SECTTYPE_WRAMX) {
+			error("`BANK = BANK(...)` only allowed for `ROMX`, `WRAMX`, `SRAM`, or `VRAM` sections");
 		}
 	} else if (!typeInfo.isBanked()) {
 		// If the section type only has a single bank, implicitly force it
@@ -498,9 +540,9 @@ static Section *getSection(
 	Section *sect = sect_FindSectionByName(name);
 
 	if (sect) {
-		mergeSections(*sect, type, org, bank, alignment, alignOffset, mod);
+		mergeSections(*sect, type, org, bank, alignment, alignOffset, bankRel, mod);
 	} else {
-		sect = createSection(name, type, org, bank, alignment, alignOffset, mod);
+		sect = createSection(name, type, org, bank, alignment, alignOffset, bankRel, mod);
 	}
 
 	return sect;

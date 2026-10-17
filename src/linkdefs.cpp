@@ -70,3 +70,7 @@ char const * const sectionModNames[] = {
     "UNION",         // SECTION_UNION
     "FRAGMENT",      // SECTION_FRAGMENT
 };
+
+std::string describeBankRel(SectionBankRel const &rel) {
+	return rel.kind == BANKREL_SYMBOL ? "`" + rel.name + "`" : "\"" + rel.name + "\"";
+}

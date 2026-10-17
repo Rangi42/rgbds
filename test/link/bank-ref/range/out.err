@@ -1,0 +1,3 @@
+FATAL: Section "Bk"'s bank depends on BANK("Ldr") with offset 999999, but ROMX only has 65535 banks
+    at bank-ref/range/a.asm(3)
+Linking aborted with 1 error

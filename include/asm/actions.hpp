@@ -57,6 +57,9 @@ std::string act_StringFormat(
 
 std::string act_SectionName(InternedStr symName);
 
+std::optional<SectionBankRel> act_BankRelSymbol(InternedStr symName);
+std::optional<SectionBankRel> act_BankRelSection(std::string const &sectName);
+
 void act_CompoundAssignment(InternedStr symName, RPNCommand op, int32_t constValue);
 
 #endif // RGBDS_ASM_ACTIONS_HPP

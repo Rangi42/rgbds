@@ -269,19 +269,28 @@ void layout_PlaceSection(std::string const &name, bool isOptional) {
 
 	// Enforce a bank if one is active, but leave any existing constraint alone.
 	if (activeBankIdx != UINT32_MAX) {
-		uint32_t bank = activeBankIdx + typeInfo.firstBank;
-		if (section->isBankFixed && bank != section->bank) {
+		if (section->bankRel) {
 			scriptError(
-			    "The linker script places section \"%s\" in %s bank %" PRIu32
-			    ", but it was already defined in bank %" PRIu32,
+			    "The linker script cannot place section \"%s\" in a specific bank, as its bank is "
+			    "specified as `BANK = BANK(%s)`",
 			    name.c_str(),
-			    section->typeInfo().name,
-			    bank,
-			    section->bank
+			    describeBankRel(*section->bankRel).c_str()
 			);
+		} else {
+			uint32_t bank = activeBankIdx + typeInfo.firstBank;
+			if (section->isBankFixed && bank != section->bank) {
+				scriptError(
+				    "The linker script places section \"%s\" in %s bank %" PRIu32
+				    ", but it was already defined in bank %" PRIu32,
+				    name.c_str(),
+				    section->typeInfo().name,
+				    bank,
+				    section->bank
+				);
+			}
+			section->isBankFixed = true;
+			section->bank = bank;
 		}
-		section->isBankFixed = true;
-		section->bank = bank;
 	}
 
 	if (!isPcFloating) {

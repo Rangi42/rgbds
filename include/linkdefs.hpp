@@ -4,11 +4,12 @@
 #define RGBDS_LINKDEFS_HPP
 
 #include <stdint.h>
+#include <string>
 
 #include "helpers.hpp" // assume
 
 #define RGBDS_OBJECT_VERSION_STRING "RGB9"
-#define RGBDS_OBJECT_REV            13U
+#define RGBDS_OBJECT_REV            14U
 
 enum AssertionType { ASSERT_WARN, ASSERT_ERROR, ASSERT_FATAL };
 
@@ -119,6 +120,29 @@ extern SectionTypeInfo sectionTypeInfo[SECTTYPE_INVALID];
 enum SectionModifier { SECTION_NORMAL, SECTION_UNION, SECTION_FRAGMENT };
 
 extern char const * const sectionModNames[];
+
+// What a section's bank constraint `BANK = BANK(other) + N` refers to
+enum BankRelKind {
+	BANKREL_NONE,      // The section's bank does not depend on another section's
+	BANKREL_SYMBOL,    // `other` is a symbol's name, its bank is the bank of its section
+	BANKREL_SECTION,   // `other` is another section's name
+	BANKREL_INVALID,
+};
+
+// A section's bank dependency, if any
+struct SectionBankRel {
+	BankRelKind kind;
+	int32_t offset;    // The section's bank is `BANK(other) + offset`
+	std::string name;
+
+	bool operator==(SectionBankRel const &rhs) const {
+		return kind == rhs.kind && offset == rhs.offset && name == rhs.name;
+	}
+};
+
+// Describes a bank reference as it would appear inside `BANK = BANK(...)` in source code,
+// i.e. with quotes for a section name, and backticks for a symbol.
+std::string describeBankRel(SectionBankRel const &rel);
 
 enum ExportLevel { SYMTYPE_LOCAL, SYMTYPE_IMPORT, SYMTYPE_EXPORT, SYMTYPE_INVALID };
 

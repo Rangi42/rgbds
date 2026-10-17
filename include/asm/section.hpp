@@ -5,6 +5,7 @@
 
 #include <memory>
 #include <optional>
+#include <optional>
 #include <stddef.h>
 #include <stdint.h>
 #include <string>
@@ -38,6 +39,7 @@ struct Section {
 	uint32_t bank;
 	uint8_t align; // Exactly as specified in `ALIGN[]`
 	uint16_t alignOfs;
+	std::optional<SectionBankRel> bankRel; // `BANK = BANK(other) + N`, if specified
 	std::vector<Patch> patches;
 	std::vector<uint8_t> data;
 	uint32_t cyclesCounter; // `__CYCLES__` value; unsigned for well-defined overflow on increment
@@ -52,6 +54,7 @@ struct SectionSpec {
 	uint32_t bank;
 	uint8_t alignment;
 	uint16_t alignOfs;
+	std::optional<SectionBankRel> bankRel; // `BANK = BANK(other) + N`, if specified
 };
 
 size_t sect_CountSections();

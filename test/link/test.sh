@@ -546,6 +546,31 @@ rgblinkQuiet "$otemp" "$gbtemp" "$gbtemp2" "$outtemp" "$outtemp2" 2>"$outtemp3"
 tryDiff "$test"/out.err "$outtemp3"
 evaluateTest
 
+for test in bank-ref/*; do
+	startTest
+	"$RGBASM" -o "$otemp" "$test"/a.asm
+	objects=("$otemp")
+	if [[ -f "$test"/b.asm ]]; then
+		"$RGBASM" -o "$gbtemp2" "$test"/b.asm
+		objects+=("$gbtemp2")
+	fi
+	continueTest
+	if [[ -f "$test"/script.link ]]; then
+		rgblinkQuiet -l "$test"/script.link -o "$gbtemp" "${objects[@]}" 2>"$outtemp"
+	else
+		rgblinkQuiet -o "$gbtemp" "${objects[@]}" 2>"$outtemp"
+	fi
+	if [[ -f "$test"/out.err ]]; then
+		tryDiff "$test"/out.err "$outtemp"
+	else
+		tryDiff /dev/null "$outtemp"
+	fi
+	if [[ -f "$test"/ref.out.bin ]]; then
+		tryCmpRom "$test"/ref.out.bin
+	fi
+	evaluateTest
+done
+
 if [[ "$failed" -eq 0 ]]; then
 	echo "${bold}${green}All ${tests} tests passed!${rescolors}${resbold}"
 else

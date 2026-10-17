@@ -148,6 +148,42 @@ static void mergeSections(Section &target, std::unique_ptr<Section> &&other) {
 		}
 	}
 
+	if (other->bankRel) {
+		if (target.bankRel) {
+			if (*target.bankRel != *other->bankRel) {
+				fatalTwoAt(
+				    target,
+				    *other,
+				    "Section \"%s\" is defined as `BANK = BANK(%s)`, but also as "
+				    "`BANK = BANK(%s)`",
+				    target.name.c_str(),
+				    describeBankRel(*target.bankRel).c_str(),
+				    describeBankRel(*other->bankRel).c_str()
+				);
+			}
+		} else if (target.isBankFixed) {
+			fatalTwoAt(
+			    target,
+			    *other,
+			    "Section \"%s\" is defined with bank %" PRIu32 ", but also as `BANK = BANK(%s)`",
+			    target.name.c_str(),
+			    target.bank,
+			    describeBankRel(*other->bankRel).c_str()
+			);
+		} else {
+			target.bankRel = std::move(other->bankRel);
+		}
+	} else if (other->isBankFixed && target.bankRel) {
+		fatalTwoAt(
+		    target,
+		    *other,
+		    "Section \"%s\" is defined as `BANK = BANK(%s)`, but also with bank %" PRIu32,
+		    target.name.c_str(),
+		    describeBankRel(*target.bankRel).c_str(),
+		    other->bank
+		);
+	}
+
 	switch (other->modifier) {
 	case SECTION_UNION:
 		checkPieceCompat(target, *other, 0);

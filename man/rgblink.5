@@ -154,6 +154,16 @@ Its bank is set to the active bank, and its address to the
 Any constraints the section already possesses (whether from earlier in the linker script, or from the object files being linked) must be consistent with what the linker script specifies: the section's type must match, the section's bank number (if set) must match the active bank, etc.
 In particular, if the section has an alignment constraint, the address at which it is placed by the linker script must obey that constraint; otherwise, an error will occur.
 .Pp
+The only exception is a section whose bank is a reference to another section's bank, i.e.\& whose declaration includes
+.Ql BANK = BANK(...) ,
+as described in
+.Xr rgbasm 5 ;
+such a section cannot be explicitly placed into a particular bank by the linker script yet, since its bank is not known then.
+The linker places it (in the same bank as the section its bank depends on, if the placement succeeds) after that section is assigned.
+See also
+.Xr rgbasm 5
+for more on bank references.
+.Pp
 After a section is placed, the
 .Dq current address
 is increased by the section's size.

@@ -266,6 +266,7 @@ static void readSection(
 	tryReadLong(tmp, file, "%s: Cannot read \"%s\"'s bank: %s", fileName, section.name.c_str());
 	section.isBankFixed = tmp >= 0;
 	section.bank = tmp;
+
 	tryGetc(byte, file, "%s: Cannot read \"%s\"'s alignment: %s", fileName, section.name.c_str());
 	if (byte > 16) {
 		byte = 16;
@@ -280,6 +281,43 @@ static void readSection(
 		tmp = UINT16_MAX;
 	}
 	section.alignOfs = tmp;
+
+	uint8_t bankRelKind;
+	tryGetc(
+	    bankRelKind, file, "%s: Cannot read \"%s\"'s bank reference: %s", fileName, section.name.c_str()
+	);
+	if (bankRelKind != BANKREL_NONE) {
+		if (bankRelKind >= BANKREL_INVALID) {
+			fatal(
+			    "%s: \"%s\" has unknown bank reference type 0x%02x",
+			    fileName,
+			    section.name.c_str(),
+			    bankRelKind
+			);
+		}
+		// The offset is int32_t-sized; `static_cast<int32_t>` reinterprets the `uint32_t`
+		// read by `readLong`, i.e. it wraps negative values like elsewhere in this file.
+		tryReadLong(
+		    tmp,
+		    file,
+		    "%s: Cannot read \"%s\"'s bank reference offset: %s",
+		    fileName,
+		    section.name.c_str()
+		);
+		std::string relName;
+		tryReadString(
+		    relName,
+		    file,
+		    "%s: Cannot read \"%s\"'s bank reference: %s",
+		    fileName,
+		    section.name.c_str()
+		);
+		section.bankRel = {
+		    .kind = static_cast<BankRelKind>(bankRelKind),
+		    .offset = static_cast<int32_t>(tmp),
+		    .name = std::move(relName),
+		};
+	}
 
 	if (!sectTypeHasData(section.type)) {
 		return;

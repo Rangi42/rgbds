@@ -90,6 +90,15 @@ static void writeSection(Section const &sect, FILE *file) {
 	putc(sect.align, file);
 	putLong(sect.alignOfs, file);
 
+	// This allows strips of sections referencing each other's banks to be split...
+	if (sect.bankRel) {
+		putc(sect.bankRel->kind, file);
+		putLong(static_cast<uint32_t>(sect.bankRel->offset), file);
+		putString(sect.bankRel->name, file);
+	} else {
+		putc(BANKREL_NONE, file);
+	}
+
 	if (sectTypeHasData(sect.type)) {
 		fwrite(sect.data.data(), 1, sect.size, file);
 		putLong(sect.patches.size(), file);

@@ -1,0 +1,1 @@
+SECTION "Half", ROMX, BANK = BANK(@)

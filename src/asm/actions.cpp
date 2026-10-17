@@ -627,6 +627,30 @@ std::string act_SectionName(InternedStr symName) {
 	return section->name;
 }
 
+std::optional<SectionBankRel> act_BankRelSymbol(InternedStr symName) {
+	if (Symbol const *sym = sym_FindScopedSymbol(symName); sym_IsPC(sym)) {
+		error("`@` refers to PC, whose bank is not tied to a section");
+		return std::nullopt;
+	} else if (sym && !sym->isLabel()) {
+		error("`BANK` argument must be a label");
+		return std::nullopt;
+	}
+	// The symbol may be defined later in the file, e.g.:
+	//     SECTION "Code", ROM0, BANK = BANK(MainData)
+	//     MainData: db 1, 2, 3
+	// so only canonicalize the name through `sym_Ref`, which also resolves the scope of
+	// local labels; matching which symbol `BANK(<symbol>)` refers to in expressions.
+	Symbol *ref = sym_Ref(symName);
+        return SectionBankRel{.kind = BANKREL_SYMBOL, .offset = 0, .name = ref->name.str()};
+}
+
+std::optional<SectionBankRel> act_BankRelSection(std::string const &sectName) {
+	// Unlike the symbol case, section names cannot be validated here, since the referenced
+	// section may not exist yet:
+	//     SECTION "Lookup table", ROMX, BANK = BANK("Lookup subroutine")
+	return SectionBankRel{.kind = BANKREL_SECTION, .offset = 0, .name = sectName};
+}
+
 void act_CompoundAssignment(InternedStr symName, RPNCommand op, int32_t constValue) {
 	Expression oldExpr, constExpr, newExpr;
 	oldExpr.makeSymbol(symName);

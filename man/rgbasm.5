@@ -921,6 +921,34 @@ See above for possible values for
 .Ar bank ,
 depending on
 .Ar type .
+.It Ic BANK No = Ic BANK Ns Pq Ar target No "= [+/-] offset"
+Specify that the section's bank must be that of
+.Ar target ,
+plus the given offset
+(0 if unspecified).
+Ar target
+can be one of the following:
+.Bl -dash
+.It
+a label (which must be present in an object file at link time, and exported if the
+.Ic BANK No = Ic BANK Ns Pq ...
+argument lives in another one), in which case the section follows that label's bank;
+.It
+a
+.Dq section name
+string, in which case the section follows that named section's bank.
+.El
+.Pp
+Thus
+.Ic BANK No = Ic BANK Ns Pq ... No + 1
+requests the section to be placed one bank after its target.
+The offset, the target's bank being at a memory region's edge taken into consideration, must
+make the section's bank fit within the target's memory region's range.
+Therefore both sections must be of the same memory region type, and a group of such sections
+cannot have cyclic dependencies between its members; the linker checks all of this at link
+time.
+This is useful, for example, for lookup tables that must span the same banks as the code
+using them.
 .It Ic ALIGN Ns Bq Ar align , offset
 Place the section at an address whose
 .Ar align

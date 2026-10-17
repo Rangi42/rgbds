@@ -1,0 +1,5 @@
+FATAL: Section "Wr" is a WRAMX section, so its bank cannot depend on that of "Ldr", which is a ROMX section
+    at bank-ref/cross-type/a.asm(3)
+    and also:
+    at bank-ref/cross-type/a.asm(1)
+Linking aborted with 1 error

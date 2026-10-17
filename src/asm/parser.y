@@ -406,6 +406,8 @@
 %type <std::vector<int32_t>> charmap_args
 %type <std::vector<Expression>> ds_args
 %type <ForArgs> for_args
+%type <std::optional<SectionBankRel>> bank_rel_ref
+%type <int32_t> bank_rel_offset
 %type <std::shared_ptr<MacroArgs>> macro_args
 %type <std::vector<InternedStr>> purge_args
 %type <SectionSpec> sect_attrs
@@ -1780,13 +1782,45 @@ sect_attrs:
 		$$.bank = -1;
 	}
 	| sect_attrs COMMA POP_ALIGN LBRACK align_spec RBRACK {
-		$$ = $1;
+		$$ = std::move($1);
 		$$.alignment = $5.alignment;
 		$$.alignOfs = $5.alignOfs;
 	}
 	| sect_attrs COMMA OP_BANK LBRACK uconst RBRACK {
-		$$ = $1;
+		$$ = std::move($1);
 		$$.bank = $5; // We cannot check the validity of this yet
+		$$.bankRel.reset(); // Later attributes take precedence
+	}
+	| sect_attrs COMMA OP_BANK POP_EQUAL OP_BANK LPAREN bank_rel_ref RPAREN bank_rel_offset {
+		$$ = std::move($1);
+		$$.bank = -1; // Later attributes take precedence
+		if ($7) {
+			$$.bankRel = std::move(*$7);
+			$$.bankRel->offset = $9;
+		}
+	}
+;
+
+bank_rel_ref:
+	  scoped_sym_no_anon {
+		$$ = act_BankRelSymbol($1);
+	}
+	// Like `BANK("section")` expressions, string literal only; ensures this does not
+	// conflict with the `scoped_sym_no_anon` alternative above.
+	| string_literal {
+		$$ = act_BankRelSection(std::move($1));
+	}
+;
+
+bank_rel_offset:
+	  %empty {
+		$$ = 0;
+	}
+	| OP_ADD iconst {
+		$$ = $2;
+	}
+	| OP_SUB iconst {
+		$$ = -$2;
 	}
 ;
 

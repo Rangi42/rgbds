@@ -1,0 +1,3 @@
+SECTION "Ldr", ROMX, BANK[1]
+
+SECTION "Bk", ROMX, BANK = BANK("Ldr") + 999999
