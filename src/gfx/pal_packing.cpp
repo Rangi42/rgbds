@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <inttypes.h>
 #include <iterator>
-#include <numeric>
 #include <optional>
 #include <queue>
 #include <stddef.h>
@@ -21,6 +20,7 @@
 
 #include "gfx/color_set.hpp"
 #include "gfx/main.hpp"
+#include "gfx/warning.hpp"
 
 // The solvers here are picked from the paper at https://arxiv.org/abs/1605.00558:
 // "Algorithms for the Pagination Problem, a Bin Packing with Overlapping Items"
@@ -32,6 +32,62 @@
 // Symbol | Color
 // Tile   | Color set
 // Page   | Palette
+
+static constexpr uint64_t ipow(uint64_t base, size_t power) {
+	uint64_t result = 1;
+	while (power > 0) {
+		result *= base;
+		--power;
+	}
+	return result;
+}
+
+struct Fraction {
+	uint64_t numer, denom;
+
+	uint64_t quotient() const {
+		assume(denom != 0);
+		return numer / denom;
+	}
+
+	uint64_t remainder() const {
+		assume(denom != 0);
+		return numer % denom;
+	}
+
+	int compare(Fraction rhs) const {
+		// Compare two fractions, lhs <=> rhs (A/B <=> C/D).
+		Fraction lhs = *this;
+		for (int sign = 1;;) {
+			if (uint64_t l_quo = lhs.quotient(), r_quo = rhs.quotient(); l_quo != r_quo) {
+				// If integer division of both fractions gives different results (A/B != C/D),
+				// then the quotients can be compared directly.
+				return l_quo < r_quo ? -sign : sign;
+			} else if (uint64_t l_rem = lhs.remainder(), r_rem = rhs.remainder();
+			           l_rem == 0 || r_rem == 0) {
+				// If integer division of both fractions gives the same result (A/B == C/D), then
+				// a fraction with a nonzero remainder is greater than one with zero remainder.
+				return sign * ((l_rem != 0) - (r_rem != 0));
+			} else {
+				// If integer division of both fractions gives the same quotient with different
+				// nonzero remainders, then compare the remainders ((A%B)/B <=> (C%D)/D), but take
+				// reciprocals to allow further reduction (B/(A%B) <=> D/(C%D)), which reverses the
+				// sign of the comparison result.
+				// Each remainder is nonzero and strictly smaller than its divisor, so both
+				// denominators decrease on every iteration, and the loop will always terminate.
+				lhs = {lhs.denom, l_rem};
+				rhs = {rhs.denom, r_rem};
+				sign = -sign;
+			}
+		}
+	}
+};
+
+// A valid palette with N opaque colors can have at most 2^N - 1 distinct nonempty color sets.
+// `options.maxOpaqueColors()` is at most `MAX_PAL_COLORS` (which is 4, since `options.bitDepth`
+// is at most 2), and `options.nbPalettes` is at most `MAX_NB_PALETTES` (256), so there can be
+// at most `MAX_NB_PALETTES * (2^MAX_PAL_COLORS - 1)` == 3840 distinct color sets.
+static constexpr size_t MAX_NB_COLOR_SETS = MAX_NB_PALETTES * ((1u << MAX_PAL_COLORS) - 1);
 
 // A reference to a color set, and attached attributes for sorting purposes
 struct ColorSetAttrs {
@@ -204,36 +260,41 @@ public:
 		});
 	}
 
-	// The `relSizeOf` method below should compute the sum, for each color in `colorSet`, of
-	// the reciprocal of the "multiplicity" of the color across "our" color sets.
+	// Computes the "relative size" of a color set on this palette.
+	// It's a measure of how much this color set would "cost" to introduce: the sum, for each color
+	// in `colorSet`, of the reciprocal of the "multiplicity" of the color across "our" color sets.
 	// However, literally computing the reciprocals would involve floating-point division, which
 	// leads to imprecision and even platform-specific differences.
-	// We avoid this by multiplying the reciprocals by a factor such that division always produces
-	// an integer; the LCM of all values the denominator can take is the smallest suitable factor.
-	static constexpr uint32_t scaleFactor = [] {
-		// Fold over 1..=17 with the associative LCM function
-		// (17 is the largest the denominator in `relSizeOf` below can be)
-		uint32_t factor = 1;
-		for (uint32_t n = 2; n <= 17; ++n) {
-			factor = std::lcm(factor, n);
-		}
-		return factor;
-	}();
+	// We avoid this by returning an unreduced fraction.
+	Fraction relSizeOf(ColorSet const &colorSet) const {
+		static constexpr size_t MAX_N = MAX_NB_COLOR_SETS + 1;
+		// For a color set with the maximum number of colors (`MAX_PAL_COLORS` == 4), and each color
+		// having the maximum "multiplicity" (`MAX_N` == `MAX_NB_COLOR_SETS + 1` == 3841), the
+		// "relative size" calculation would add MAX_PAL_COLORS copies of 1/MAX_N to 0/1, giving a
+		// reduced fraction of MAX_PAL_COLORS/MAX_N.
+		// In the algebraically equivalent calculation below, the maximum numerator would be
+		// MAX_PAL_COLORS * MAX_N^(MAX_PAL_COLORS - 1) == 226669409284, and the maximum denominator
+		// would be MAX_N^MAX_PAL_COLORS == 217659300264961, both of which fit in `uint64_t`.
+		assume(colorSet.size() <= MAX_PAL_COLORS);
+		static_assert(ipow(MAX_N, MAX_PAL_COLORS - 1) <= UINT64_MAX / MAX_PAL_COLORS);
+		static_assert(ipow(MAX_N, MAX_PAL_COLORS) <= UINT64_MAX);
 
-	// Computes the "relative size" of a color set on this palette;
-	// it's a measure of how much this color set would "cost" to introduce.
-	uint32_t relSizeOf(ColorSet const &colorSet) const {
-		uint32_t relSize = 0;
+		Fraction relSize{0, 1};
 		for (uint16_t color : colorSet) {
-			uint32_t n = multiplicity(color);
 			// We increase the denominator by 1 here; the reference code does this,
 			// but the paper does not. Not adding 1 makes a multiplicity of 0 cause a division by 0
 			// (that is, if the color is not found in any color set), and adding 1 still seems
 			// to preserve the paper's reasoning.
-			//
-			// The scale factor should ensure integer divisions only.
-			assume(scaleFactor % (n + 1) == 0);
-			relSize += scaleFactor / (n + 1);
+			uint64_t n = multiplicity(color) + 1;
+			assume(n <= MAX_N);
+			// We know that the denominator `n` is nonzero, and that overflow will not occur
+			// because of the above maximum numerator and denominator.
+			assume(n != 0);
+			assume(relSize.numer <= UINT64_MAX / n);
+			assume(relSize.numer * n <= UINT64_MAX - relSize.denom);
+			assume(relSize.denom <= UINT64_MAX / n);
+			// A/B + 1/D == AD/BD + B/BD == (AD+B)/BD
+			relSize = {relSize.numer * n + relSize.denom, relSize.denom * n};
 		}
 		return relSize;
 	}
@@ -379,6 +440,16 @@ static void decant(std::vector<AssignedSets> &assignments, std::vector<ColorSet>
 std::pair<std::vector<size_t>, size_t> overloadAndRemove(std::vector<ColorSet> const &colorSets) {
 	verbosePrint(VERB_NOTICE, "Paginating palettes using \"overload-and-remove\" strategy...\n");
 
+	// Color set generation in `process` already avoided making duplicate or subset color sets,
+	// so we can limit the maximum number of color sets here to prevent `Fraction` overflow.
+	if (colorSets.size() > MAX_NB_COLOR_SETS) {
+		fatal(
+		    "Too many distinct tile color combinations for %" PRIu16 " palette%s",
+		    options.nbPalettes,
+		    options.nbPalettes == 1 ? "" : "s"
+		);
+	}
+
 	// Sort the color sets by size, which improves the packing algorithm's efficiency
 	auto const indexOfLargestColorSetFirst = [&colorSets](size_t left, size_t right) {
 		ColorSet const &lhs = colorSets[left];
@@ -405,7 +476,7 @@ std::pair<std::vector<size_t>, size_t> overloadAndRemove(std::vector<ColorSet> c
 		size_t bestPalIndex = assignments.size();
 		// We're looking for a palette where the color set's relative size is less than
 		// its actual size; so only overwrite the "not found" index on meeting that criterion
-		uint32_t bestRelSize = colorSet.size() * AssignedSets::scaleFactor;
+		Fraction bestRelSize{colorSet.size(), 1};
 
 		for (size_t i = 0; i < assignments.size(); ++i) {
 			// Skip the page if this one is banned from it
@@ -413,16 +484,17 @@ std::pair<std::vector<size_t>, size_t> overloadAndRemove(std::vector<ColorSet> c
 				continue;
 			}
 
-			uint32_t relSize = assignments[i].relSizeOf(colorSet);
+			Fraction relSize = assignments[i].relSizeOf(colorSet);
 			verbosePrint(
 			    VERB_TRACE,
-			    "  Relative size to palette %zu (of %zu): %" PRIu32 " (size = %zu)\n",
+			    "  Relative size to palette %zu (of %zu): %" PRIu64 "/%" PRIu64 " (size = %zu)\n",
 			    i,
 			    assignments.size(),
-			    relSize,
+			    relSize.numer,
+			    relSize.denom,
 			    colorSet.size()
 			);
-			if (relSize < bestRelSize) {
+			if (relSize.compare(bestRelSize) < 0) {
 				bestPalIndex = i;
 				bestRelSize = relSize;
 			}
@@ -455,27 +527,32 @@ std::pair<std::vector<size_t>, size_t> overloadAndRemove(std::vector<ColorSet> c
 			ColorSet const &colorSet2 = colorSets[attrs2.colorSetIndex];
 			size_t size1 = colorSet1.size();
 			size_t size2 = colorSet2.size();
-			uint32_t relSize1 = bestPal.relSizeOf(colorSet1);
-			uint32_t relSize2 = bestPal.relSizeOf(colorSet2);
-
+			Fraction relSize1 = bestPal.relSizeOf(colorSet1);
+			Fraction relSize2 = bestPal.relSizeOf(colorSet2);
+			// For a color set with the maximum number of colors (`MAX_PAL_COLORS` == 4), and the
+			// maximum relative size (denominator == `(MAX_NB_COLOR_SETS + 1)^MAX_PAL_COLORS` ==
+			// 217659300264961), the maximum efficiency numerator would be `MAX_PAL_COLORS *
+			// (MAX_NB_COLOR_SETS + 1)^MAX_PAL_COLORS` == 870637201059844, which fits in `uint64_t`.
+			static_assert(
+			    ipow(MAX_NB_COLOR_SETS + 1, MAX_PAL_COLORS) <= UINT64_MAX / MAX_PAL_COLORS
+			);
+			assume(size1 <= UINT64_MAX / relSize1.denom);
+			assume(size2 <= UINT64_MAX / relSize2.denom);
+			// efficiency == size / relSize == size * 1 / relSize
+			Fraction efficiency1{size1 * relSize1.denom, relSize1.numer};
+			Fraction efficiency2{size2 * relSize2.denom, relSize2.numer};
 			verbosePrint(
 			    VERB_TRACE,
-			    "  Color sets %zu <=> %zu: Efficiency: %zu / %" PRIu32 " <=> %zu / "
-			    "%" PRIu32 "\n",
+			    "  Color sets %zu <=> %zu: Efficiency: %" PRIu64 "/%" PRIu64 " <=> %" PRIu64
+			    "/%" PRIu64 "\n",
 			    attrs1.colorSetIndex,
 			    attrs2.colorSetIndex,
-			    size1,
-			    relSize1,
-			    size2,
-			    relSize2
+			    efficiency1.numer,
+			    efficiency1.denom,
+			    efficiency2.numer,
+			    efficiency2.denom
 			);
-
-			// This comparison is algebraically equivalent to
-			// `size1 / relSize1 <=> size2 / relSize2`,
-			// but without potential precision loss from floating-point division.
-			size_t efficiency1 = size1 * relSize2;
-			size_t efficiency2 = size2 * relSize1;
-			return (efficiency1 > efficiency2) - (efficiency1 < efficiency2);
+			return efficiency1.compare(efficiency2);
 		};
 
 		// If this overloads the palette, get it back to normal (if possible)
