@@ -55,6 +55,27 @@ struct Fraction {
 		return numer % denom;
 	}
 
+	Fraction reciprocal() const {
+		assume(numer != 0);
+		return {denom, numer};
+	}
+
+	Fraction scale(uint64_t n) const {
+		assume(numer <= UINT64_MAX / n);
+		assume(denom <= UINT64_MAX / n);
+		return {numer * n, denom * n};
+	}
+
+	Fraction add(uint64_t n) const {
+		assume(numer <= UINT64_MAX - n);
+		return {numer + n, denom};
+	}
+
+	Fraction mul(uint64_t n) const {
+		assume(numer <= UINT64_MAX / n);
+		return {numer * n, denom};
+	}
+
 	int compare(Fraction rhs) const {
 		// Compare two fractions, lhs <=> rhs (A/B <=> C/D).
 		Fraction lhs = *this;
@@ -287,14 +308,8 @@ public:
 			// to preserve the paper's reasoning.
 			uint64_t n = multiplicity(color) + 1;
 			assume(n <= MAX_N);
-			// We know that the denominator `n` is nonzero, and that overflow will not occur
-			// because of the above maximum numerator and denominator.
-			assume(n != 0);
-			assume(relSize.numer <= UINT64_MAX / n);
-			assume(relSize.numer * n <= UINT64_MAX - relSize.denom);
-			assume(relSize.denom <= UINT64_MAX / n);
 			// A/B + 1/D == AD/BD + B/BD == (AD+B)/BD
-			relSize = {relSize.numer * n + relSize.denom, relSize.denom * n};
+			relSize = relSize.scale(n).add(relSize.denom);
 		}
 		return relSize;
 	}
@@ -536,11 +551,9 @@ std::pair<std::vector<size_t>, size_t> overloadAndRemove(std::vector<ColorSet> c
 			static_assert(
 			    ipow(MAX_NB_COLOR_SETS + 1, MAX_PAL_COLORS) <= UINT64_MAX / MAX_PAL_COLORS
 			);
-			assume(size1 <= UINT64_MAX / relSize1.denom);
-			assume(size2 <= UINT64_MAX / relSize2.denom);
 			// efficiency == size / relSize == size * 1 / relSize
-			Fraction efficiency1{size1 * relSize1.denom, relSize1.numer};
-			Fraction efficiency2{size2 * relSize2.denom, relSize2.numer};
+			Fraction efficiency1 = relSize1.reciprocal().mul(size1);
+			Fraction efficiency2 = relSize2.reciprocal().mul(size2);
 			verbosePrint(
 			    VERB_TRACE,
 			    "  Color sets %zu <=> %zu: Efficiency: %" PRIu64 "/%" PRIu64 " <=> %" PRIu64
