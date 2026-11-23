@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <string>
+#include <string_view>
 #include <time.h>
 #include <unordered_map>
 #include <utility>
@@ -27,7 +28,7 @@
 #include "parser.hpp" // Generated from parser.y
 #include "style.hpp"  // style_Parse
 #include "usage.hpp"
-#include "util.hpp" // UpperMap
+#include "util.hpp" // parseWholeNumber, Uppercase
 #include "verbosity.hpp"
 
 #include "asm/charmap.hpp"
@@ -155,25 +156,33 @@ static std::vector<StateFeature> parseStateFeatures(char *str) {
 			fatal("Empty feature for option '-s'");
 		}
 		// Parse the `feature` and update the `features` list
-		static UpperMap<StateFeature> const featureNames{
-		    {"EQU",   STATE_EQU  },
-		    {"VAR",   STATE_VAR  },
-		    {"EQUS",  STATE_EQUS },
-		    {"CHAR",  STATE_CHAR },
-		    {"MACRO", STATE_MACRO},
-		};
+		static Uppercase const uppercase;
 		if (!strcasecmp(feature, "all")) {
 			if (!features.empty()) {
 				warnx("Redundant feature before \"%s\" for option '-s'", feature);
 			}
-			features.assign({STATE_EQU, STATE_VAR, STATE_EQUS, STATE_CHAR, STATE_MACRO});
-		} else if (auto search = featureNames.find(feature); search == featureNames.end()) {
-			fatal("Invalid feature for option '-s': \"%s\"", feature);
-		} else if (StateFeature value = search->second;
-		           std::find(RANGE(features), value) != features.end()) {
-			warnx("Ignoring duplicate feature for option '-s': \"%s\"", feature);
+			features.clear();
+			for (size_t i = 0; i < NB_STATE_FEATURES; ++i) {
+				features.push_back(static_cast<StateFeature>(i));
+			}
 		} else {
-			features.push_back(value);
+			std::string_view featureName = feature;
+			size_t i = 0;
+			for (; i < NB_STATE_FEATURES; ++i) {
+				if (featureName.length() == strlen(stateFeatureInfo[i].name)
+				    && uppercase(featureName, stateFeatureInfo[i].name)) {
+					break;
+				}
+			}
+			if (i == NB_STATE_FEATURES) {
+				fatal("Invalid feature for option '-s': \"%s\"", feature);
+			}
+			StateFeature value = static_cast<StateFeature>(i);
+			if (std::find(RANGE(features), value) != features.end()) {
+				warnx("Ignoring duplicate feature for option '-s': \"%s\"", feature);
+			} else {
+				features.push_back(value);
+			}
 		}
 		feature = next;
 	}
@@ -439,20 +448,13 @@ static void verboseOutputConfig() {
 	// -s/--state
 	if (!localOptions.stateFileSpecs.empty()) {
 		fputs("\tOutput state files:\n", stderr);
-		static char const *featureNames[NB_STATE_FEATURES] = {
-		    "equ",
-		    "var",
-		    "equs",
-		    "char",
-		    "macro",
-		};
 		for (auto const &[name, features] : localOptions.stateFileSpecs) {
 			fprintf(stderr, "\t - %s: ", name == "-" ? "<stdout>" : name.c_str());
 			for (size_t i = 0; i < features.size(); ++i) {
 				if (i > 0) {
 					fputs(", ", stderr);
 				}
-				fputs(featureNames[features[i]], stderr);
+				fputs(stateFeatureInfo[features[i]].name, stderr);
 			}
 			putc('\n', stderr);
 		}
