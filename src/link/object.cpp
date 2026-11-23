@@ -5,7 +5,6 @@
 #include "link/object.hpp"
 
 #include <algorithm>
-#include <deque>
 #include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
@@ -32,8 +31,14 @@
 #include "link/symbol.hpp"
 #include "link/warning.hpp"
 
-static std::deque<std::vector<Symbol>> symbolLists;
-static std::vector<std::vector<FileStackNode>> nodes;
+// State owned by each object file. The outer vector is sized once by `obj_Setup`, so the
+// per-file containers are never moved and pointers into them stay valid once populated.
+struct ObjectFile {
+	std::vector<Symbol> symbols;
+	std::vector<FileStackNode> nodes;
+};
+
+static std::vector<ObjectFile> objectFiles;
 
 // Helper functions for reading object files
 
@@ -514,6 +519,11 @@ void obj_ReadFile(std::string const &filePath, size_t fileID) {
 	}
 	Defer closeFile{[&] { xfclose(file); }};
 
+	if (fileID >= objectFiles.size()) {
+		fatal("Internal error: invalid object file ID #%zu", fileID);
+	}
+	ObjectFile &object = objectFiles[fileID];
+
 	// First, check if the object is a RGBDS object, a SDCC one, or neither.
 	// A single `ungetc` is guaranteed to work.
 	switch (ungetc(getc(file), file)) {
@@ -526,7 +536,7 @@ void obj_ReadFile(std::string const &filePath, size_t fileID) {
 		// This is (probably) a SDCC object file, defer the rest of detection to it.
 		// Since SDCC does not provide line info, everything will be reported as coming from the
 		// object file. It's better than nothing.
-		nodes[fileID].push_back({
+		object.nodes.push_back({
 		    .type = NODE_FILE,
 		    .data = std::variant<std::monostate, std::vector<uint32_t>, std::string>(fileName),
 		    .isQuiet = false,
@@ -534,9 +544,9 @@ void obj_ReadFile(std::string const &filePath, size_t fileID) {
 		    .lineNo = 0,
 		});
 
-		std::vector<Symbol> &fileSymbols = symbolLists.emplace_front();
+		std::vector<Symbol> &fileSymbols = object.symbols;
 
-		sdobj_ReadFile(nodes[fileID].back(), file, fileSymbols);
+		sdobj_ReadFile(object.nodes.back(), file, fileSymbols);
 		return;
 	}
 
@@ -578,19 +588,20 @@ void obj_ReadFile(std::string const &filePath, size_t fileID) {
 
 	uint32_t nbNodes;
 	tryReadLong(nbNodes, file, "%s: Cannot read number of nodes: %s", fileName);
-	nodes[fileID].resize(nbNodes);
+	object.nodes.resize(nbNodes);
 	verbosePrint(VERB_INFO, "Reading %u nodes...\n", nbNodes);
 	for (uint32_t nodeID = nbNodes; nodeID--;) {
-		readFileStackNode(file, nodes[fileID], nodeID, fileName);
+		readFileStackNode(file, object.nodes, nodeID, fileName);
 	}
 
 	// This file's symbols, kept to link sections to them
-	std::vector<Symbol> &fileSymbols = symbolLists.emplace_front(nbSymbols);
+	std::vector<Symbol> &fileSymbols = object.symbols;
+	fileSymbols.resize(nbSymbols);
 	std::vector<uint32_t> nbSymPerSect(nbSections, 0);
 
 	verbosePrint(VERB_INFO, "Reading %" PRIu32 " symbols...\n", nbSymbols);
 	for (Symbol &sym : fileSymbols) {
-		readSymbol(file, sym, fileName, nodes[fileID]);
+		readSymbol(file, sym, fileName, object.nodes);
 		sym_AddSymbol(sym);
 		if (std::holds_alternative<Label>(sym.data)) {
 			int32_t sectionID = std::get<Label>(sym.data).sectionID;
@@ -613,7 +624,7 @@ void obj_ReadFile(std::string const &filePath, size_t fileID) {
 	for (uint32_t i = 0; i < nbSections; ++i) {
 		fileSections[i] = std::make_unique<Section>();
 		fileSections[i]->nextPiece = nullptr;
-		readSection(file, *fileSections[i], fileName, nodes[fileID]);
+		readSection(file, *fileSections[i], fileName, object.nodes);
 		fileSections[i]->fileSymbols = &fileSymbols;
 		fileSections[i]->symbols.reserve(nbSymPerSect[i]);
 	}
@@ -624,7 +635,7 @@ void obj_ReadFile(std::string const &filePath, size_t fileID) {
 	for (uint32_t i = 0; i < nbAsserts; ++i) {
 		Assertion &assertion = patch_AddAssertion();
 
-		readAssertion(file, assertion, fileName, i, nodes[fileID]);
+		readAssertion(file, assertion, fileName, i, object.nodes);
 
 		if (assertion.rpn.pcSectionID == UINT32_MAX) {
 			assertion.rpn.pcSection = nullptr;
@@ -685,5 +696,5 @@ void obj_ReadFile(std::string const &filePath, size_t fileID) {
 }
 
 void obj_Setup(size_t nbFiles) {
-	nodes.resize(nbFiles);
+	objectFiles.assign(nbFiles, {});
 }
