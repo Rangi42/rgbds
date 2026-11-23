@@ -3,9 +3,8 @@
 #ifndef RGBDS_ASM_WARNING_HPP
 #define RGBDS_ASM_WARNING_HPP
 
-#include <functional>
-
 #include "diagnostics.hpp"
+#include "helpers.hpp"
 
 enum WarningLevel {
 	LEVEL_DEFAULT,    // Warnings that are enabled by default
@@ -70,7 +69,7 @@ void fatal(char const *fmt, ...);
 
 // Used for fatal errors that handle their own backtrace output.
 [[noreturn]]
-void fatalNoTrace(std::function<void()> callback);
+void fatalNoTrace(FunctionRef<void()> callback);
 
 // Used for errors that make it impossible to assemble correctly, but don't
 // affect the following code. The code will fail to assemble but the user will
@@ -82,7 +81,7 @@ void error(char const *fmt, ...);
 // Used for errors that handle their own backtrace output. The code will fail
 // to assemble but the user will get a list of all errors at the end, making it
 // easier to fix all of them at once.
-void errorNoTrace(std::function<void()> callback);
+void errorNoTrace(FunctionRef<void()> callback);
 
 void requireZeroErrors();
 

@@ -3,7 +3,6 @@
 #ifndef RGBDS_ASM_SECTION_HPP
 #define RGBDS_ASM_SECTION_HPP
 
-#include <functional>
 #include <memory>
 #include <optional>
 #include <stddef.h>
@@ -11,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "helpers.hpp"
 #include "intern.hpp"
 #include "linkdefs.hpp"
 
@@ -55,7 +55,7 @@ struct SectionSpec {
 };
 
 size_t sect_CountSections();
-void sect_ForEach(std::function<void(Section &)> const &callback);
+void sect_ForEach(FunctionRef<void(Section &)> callback);
 
 Section *sect_FindSectionByName(std::string const &name);
 void sect_NewSection(

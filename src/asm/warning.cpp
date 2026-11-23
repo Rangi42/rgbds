@@ -2,7 +2,6 @@
 
 #include "asm/warning.hpp"
 
-#include <functional>
 #include <inttypes.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -89,7 +88,7 @@ void error(char const *fmt, ...) {
 	incrementErrors();
 }
 
-void errorNoTrace(std::function<void()> callback) {
+void errorNoTrace(FunctionRef<void()> callback) {
 	style_Set(stderr, STYLE_RED, true);
 	fputs("error: ", stderr);
 	style_Reset(stderr);
@@ -110,7 +109,7 @@ void fatal(char const *fmt, ...) {
 }
 
 [[noreturn]]
-void fatalNoTrace(std::function<void()> callback) {
+void fatalNoTrace(FunctionRef<void()> callback) {
 	style_Set(stderr, STYLE_RED, true);
 	fputs("FATAL: ", stderr);
 	style_Reset(stderr);

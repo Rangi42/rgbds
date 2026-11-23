@@ -100,8 +100,8 @@ void charmap_Init() {
 }
 
 bool charmap_ForEach(
-    std::function<void(InternedStr)> const &mapFunc,
-    std::function<void(std::string const &, std::vector<int32_t>)> const &charFunc
+    FunctionRef<void(InternedStr)> mapFunc,
+    FunctionRef<void(std::string const &, std::vector<int32_t>)> charFunc
 ) {
 	for (Charmap const &charmap : charmaps) {
 		std::map<size_t, std::string> mappings;

@@ -3,7 +3,6 @@
 #ifndef RGBDS_LINK_SECTION_HPP
 #define RGBDS_LINK_SECTION_HPP
 
-#include <functional>
 #include <memory>
 #include <optional>
 #include <stdint.h>
@@ -117,7 +116,7 @@ public:
 
 // Execute a callback for each section currently registered.
 // This is to avoid exposing the data structure in which sections are stored.
-void sect_ForEach(std::function<void(Section &)> const &callback);
+void sect_ForEach(FunctionRef<void(Section &)> callback);
 
 // Registers a section to be processed.
 void sect_AddSection(std::unique_ptr<Section> &&section);

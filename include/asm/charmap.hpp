@@ -3,7 +3,6 @@
 #ifndef RGBDS_ASM_CHARMAP_HPP
 #define RGBDS_ASM_CHARMAP_HPP
 
-#include <functional>
 #include <optional>
 #include <stddef.h>
 #include <stdint.h>
@@ -12,11 +11,12 @@
 #include <vector>
 
 #include "asm/intern.hpp"
+#include "helpers.hpp"
 
 void charmap_Init();
 bool charmap_ForEach(
-    std::function<void(InternedStr)> const &mapFunc,
-    std::function<void(std::string const &, std::vector<int32_t>)> const &charFunc
+    FunctionRef<void(InternedStr)> mapFunc,
+    FunctionRef<void(std::string const &, std::vector<int32_t>)> charFunc
 );
 void charmap_New(InternedStr name, InternedStr const *baseName);
 void charmap_Set(InternedStr name);

@@ -3,7 +3,9 @@
 #ifndef RGBDS_HELPERS_HPP
 #define RGBDS_HELPERS_HPP
 
+#include <memory>
 #include <type_traits>
+#include <utility>
 
 // Ideally we'd use `std::unreachable`, but it has insufficient compiler support
 #ifdef __GNUC__ // GCC or compatible
@@ -125,6 +127,48 @@ concept InvocableR = std::is_invocable_r_v<ReturnT, FnT, Args...>;
 // Concept for template parameters that must match a particular type modulo cv-qualifiers
 template<typename T, typename UnqualifiedT>
 concept QualifiedEquivalent = std::is_same_v<std::remove_cvref_t<T>, UnqualifiedT>;
+
+// Non-owning reference to a callable; the callable must outlive the `FunctionRef`.
+// Unlike `std::function`, this never allocates and can be passed by value.
+template<typename Signature>
+class FunctionRef;
+
+template<typename R, typename... Args>
+class FunctionRef<R(Args...)> {
+	void *obj = nullptr;
+	R (*invoke)(void *, Args...) = nullptr;
+	R (*func)(Args...) = nullptr;
+
+public:
+	FunctionRef() = delete;
+
+	FunctionRef(R (*function)(Args...)) : func(function) { assume(function != nullptr); }
+
+	template<typename F>
+	    requires(!QualifiedEquivalent<F, FunctionRef>
+	             && !std::is_function_v<std::remove_reference_t<F>>
+	             && std::is_invocable_r_v<R, F &, Args...>)
+	FunctionRef(F &&f)
+	    : obj(const_cast<void *>(static_cast<void const *>(std::addressof(f)))),
+	      invoke([](void *ptr, Args... args) -> R {
+		      if constexpr (std::is_void_v<R>) {
+			      (*static_cast<std::remove_reference_t<F> *>(ptr))(
+			          std::forward<Args>(args)...
+			      );
+		      } else {
+			      return (*static_cast<std::remove_reference_t<F> *>(ptr))(
+			          std::forward<Args>(args)...
+			      );
+		      }
+	      }) {}
+
+	R operator()(Args... args) const {
+		if (invoke) {
+			return invoke(obj, std::forward<Args>(args)...);
+		}
+		return func(std::forward<Args>(args)...);
+	}
+};
 
 // For ad-hoc RAII in place of a `defer` statement or cross-platform `__attribute__((cleanup))`
 template<Procedure DeferredFnT>

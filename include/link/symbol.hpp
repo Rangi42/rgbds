@@ -5,11 +5,11 @@
 
 // GUIDELINE: external code MUST NOT BE AWARE of the data structure used!
 
-#include <functional>
 #include <stdint.h>
 #include <string>
 #include <variant>
 
+#include "helpers.hpp"
 #include "linkdefs.hpp"
 
 struct FileStackNode;
@@ -38,7 +38,7 @@ struct Symbol {
 	void fixSectionOffset();
 };
 
-void sym_ForEach(std::function<void(Symbol &)> const &callback);
+void sym_ForEach(FunctionRef<void(Symbol &)> callback);
 
 void sym_AddSymbol(Symbol &symbol);
 
