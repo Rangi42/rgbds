@@ -93,7 +93,7 @@ size_t sect_CountSections() {
 	return sections.size();
 }
 
-void sect_ForEach(void (*callback)(Section &)) {
+void sect_ForEach(std::function<void(Section &)> const &callback) {
 	for (Section &sect : sections) {
 		callback(sect);
 	}

@@ -64,7 +64,7 @@ bool sym_IsDotScope(InternedStr symName) {
 	return symName == globalScopeName || symName == localScopeName;
 }
 
-void sym_ForEach(void (*callback)(Symbol &)) {
+void sym_ForEach(std::function<void(Symbol &)> const &callback) {
 	for (auto &it : symbols) {
 		callback(it.second);
 	}

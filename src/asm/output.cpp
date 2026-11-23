@@ -214,7 +214,7 @@ void out_WriteObject() {
 		return;
 	}
 
-	static FILE *file; // `static` so `sect_ForEach` callback can see it
+	FILE *file;
 	char const *objectFileName = options.objectFileName->c_str();
 	if (*options.objectFileName != "-") {
 		file = fopen(objectFileName, "wb");
@@ -257,7 +257,7 @@ void out_WriteObject() {
 		writeSymbol(*sym, file);
 	}
 
-	sect_ForEach([](Section &sect) { writeSection(sect, file); });
+	sect_ForEach([&](Section &sect) { writeSection(sect, file); });
 
 	putLong(assertions.size(), file);
 
@@ -300,10 +300,9 @@ static bool compareSymbols(Symbol const *sym1, Symbol const *sym2) {
 }
 
 static bool dumpEquConstants(FILE *file) {
-	static std::vector<Symbol *> equConstants; // `static` so `sym_ForEach` callback can see it
-	equConstants.clear();
+	std::vector<Symbol *> equConstants;
 
-	sym_ForEach([](Symbol &sym) {
+	sym_ForEach([&](Symbol &sym) {
 		if (!sym.isBuiltin && sym.type == SYM_EQU) {
 			equConstants.push_back(&sym);
 		}
@@ -319,10 +318,9 @@ static bool dumpEquConstants(FILE *file) {
 }
 
 static bool dumpVariables(FILE *file) {
-	static std::vector<Symbol *> variables; // `static` so `sym_ForEach` callback can see it
-	variables.clear();
+	std::vector<Symbol *> variables;
 
-	sym_ForEach([](Symbol &sym) {
+	sym_ForEach([&](Symbol &sym) {
 		if (!sym.isBuiltin && sym.type == SYM_VAR) {
 			variables.push_back(&sym);
 		}
@@ -338,10 +336,9 @@ static bool dumpVariables(FILE *file) {
 }
 
 static bool dumpEqusConstants(FILE *file) {
-	static std::vector<Symbol *> equsConstants; // `static` so `sym_ForEach` callback can see it
-	equsConstants.clear();
+	std::vector<Symbol *> equsConstants;
 
-	sym_ForEach([](Symbol &sym) {
+	sym_ForEach([&](Symbol &sym) {
 		if (!sym.isBuiltin && sym.type == SYM_EQUS) {
 			equsConstants.push_back(&sym);
 		}
@@ -358,29 +355,25 @@ static bool dumpEqusConstants(FILE *file) {
 }
 
 static bool dumpCharmaps(FILE *file) {
-	static FILE *charmapFile; // `static` so `charmap_ForEach` callbacks can see it
-	charmapFile = file;
-
 	// Characters are ordered by charmap, then by definition order
 	return charmap_ForEach(
-	    [](InternedStr name) { fprintf(charmapFile, "newcharmap %s\n", name.c_str()); },
-	    [](std::string const &mapping, std::vector<int32_t> value) {
-		    fputs("charmap \"", charmapFile);
-		    dumpString(mapping, charmapFile);
-		    putc('"', charmapFile);
+	    [&](InternedStr name) { fprintf(file, "newcharmap %s\n", name.c_str()); },
+	    [&](std::string const &mapping, std::vector<int32_t> value) {
+		    fputs("charmap \"", file);
+		    dumpString(mapping, file);
+		    putc('"', file);
 		    for (int32_t v : value) {
-			    fprintf(charmapFile, ", $%" PRIx32, v);
+			    fprintf(file, ", $%" PRIx32, v);
 		    }
-		    putc('\n', charmapFile);
+		    putc('\n', file);
 	    }
 	);
 }
 
 static bool dumpMacros(FILE *file) {
-	static std::vector<Symbol *> macros; // `static` so `sym_ForEach` callback can see it
-	macros.clear();
+	std::vector<Symbol *> macros;
 
-	sym_ForEach([](Symbol &sym) {
+	sym_ForEach([&](Symbol &sym) {
 		if (!sym.isBuiltin && sym.type == SYM_MACRO) {
 			macros.push_back(&sym);
 		}

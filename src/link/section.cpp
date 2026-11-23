@@ -19,7 +19,7 @@
 
 static InsertionOrderedMap<std::string, std::unique_ptr<Section>> sections;
 
-void sect_ForEach(void (*callback)(Section &)) {
+void sect_ForEach(std::function<void(Section &)> const &callback) {
 	for (std::unique_ptr<Section> &ptr : sections) {
 		callback(*ptr);
 	}

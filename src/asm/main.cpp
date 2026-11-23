@@ -426,8 +426,8 @@ static void verboseOutputConfig() {
 		fprintf(stderr, "\tMaximum %" PRIu64 " errors\n", options.maxErrors);
 	}
 	// -D/--define
-	static bool hasDefines = false; // `static` so `sym_ForEach` callback can see it
-	sym_ForEach([](Symbol &sym) {
+	bool hasDefines = false;
+	sym_ForEach([&](Symbol &sym) {
 		if (!sym.isBuiltin && sym.type == SYM_EQUS) {
 			if (!hasDefines) {
 				fputs("\tDefinitions:\n", stderr);

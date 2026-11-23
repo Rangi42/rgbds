@@ -5,6 +5,7 @@
 
 // GUIDELINE: external code MUST NOT BE AWARE of the data structure used!
 
+#include <functional>
 #include <stdint.h>
 #include <string>
 #include <variant>
@@ -37,7 +38,7 @@ struct Symbol {
 	void fixSectionOffset();
 };
 
-void sym_ForEach(void (*callback)(Symbol &));
+void sym_ForEach(std::function<void(Symbol &)> const &callback);
 
 void sym_AddSymbol(Symbol &symbol);
 

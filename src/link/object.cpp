@@ -4,6 +4,7 @@
 
 #include "link/object.hpp"
 
+#include <algorithm>
 #include <deque>
 #include <errno.h>
 #include <inttypes.h>
@@ -137,6 +138,9 @@ static void readFileStackNode(
 			    i
 			);
 		}
+		// Object files store iteration counts deepest-first; keep the same in-memory order as
+		// RGBASM, so both programs can share the backtrace-printing logic.
+		std::reverse(RANGE(node.iters()));
 		if (!node.parent) {
 			fatal(
 			    "%s: Invalid object file: root node (#%" PRIu32 ") may not be REPT",

@@ -21,7 +21,7 @@
 static std::unordered_map<std::string, Symbol *> symbols;
 static std::unordered_map<std::string, std::vector<Symbol *>> localSymbols;
 
-void sym_ForEach(void (*callback)(Symbol &)) {
+void sym_ForEach(std::function<void(Symbol &)> const &callback) {
 	for (auto &it : symbols) {
 		callback(*it.second);
 	}

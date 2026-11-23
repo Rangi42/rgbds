@@ -3,6 +3,7 @@
 #ifndef RGBDS_ASM_SYMBOL_HPP
 #define RGBDS_ASM_SYMBOL_HPP
 
+#include <functional>
 #include <memory>
 #include <stdint.h>
 #include <string>
@@ -72,7 +73,7 @@ struct Symbol {
 
 bool sym_IsDotScope(InternedStr symName);
 
-void sym_ForEach(void (*callback)(Symbol &));
+void sym_ForEach(std::function<void(Symbol &)> const &callback);
 
 Symbol *sym_AddLocalLabel(InternedStr symName);
 Symbol *sym_AddLabel(InternedStr symName);
