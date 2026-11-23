@@ -9,6 +9,7 @@
 #include <inttypes.h>
 #include <limits.h>
 #include <memory>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,17 +43,6 @@ static std::vector<ObjectFile> objectFiles;
 
 // Helper functions for reading object files
 
-// For internal use only by `tryReadLong` and `tryGetc`!
-#define tryRead(func, type, errval, vartype, var, file, ...) \
-	do { \
-		FILE *tmpFile = file; \
-		type tmpVal = func(tmpFile); \
-		if (tmpVal == (errval)) { \
-			fatal(__VA_ARGS__, feof(tmpFile) ? "Unexpected end of file" : strerror(errno)); \
-		} \
-		var = static_cast<vartype>(tmpVal); \
-	} while (0)
-
 // Reads an unsigned long (32-bit) value from a file, or `INT64_MAX` on failure.
 static int64_t readLong(FILE *file) {
 	uint32_t value = 0;
@@ -70,26 +60,66 @@ static int64_t readLong(FILE *file) {
 	return value;
 }
 
-// Helper macro to read a long from a file to a var, or error out if it fails to.
-#define tryReadLong(var, file, ...) \
-	tryRead(readLong, int64_t, INT64_MAX, long, var, file, __VA_ARGS__)
+static std::string formatMessage(char const *fmt, va_list args) {
+	va_list copy;
+	va_copy(copy, args);
+	int length = vsnprintf(nullptr, 0, fmt, copy);
+	va_end(copy);
+	if (length < 0) {
+		fatal("Failed to format object file error message");
+	}
+	std::string message(length + 1, '\0');
+	vsnprintf(message.data(), message.size(), fmt, args);
+	message.pop_back();
+	return message;
+}
 
-// Helper macro to read a byte from a file to a var, or error out if it fails to.
-#define tryGetc(var, file, ...) tryRead(getc, int, EOF, uint8_t, var, file, __VA_ARGS__)
+[[noreturn]]
+static void fatalRead(FILE *file, char const *fmt, va_list args) {
+	fatal(
+	    "%s: %s",
+	    formatMessage(fmt, args).c_str(),
+	    feof(file) ? "Unexpected end of file" : strerror(errno)
+	);
+}
 
-// Helper macro to read a '\0'-terminated string from a file, or error out if it fails to.
-#define tryReadString(var, file, ...) \
-	do { \
-		FILE *tmpFile = file; \
-		std::string &tmpVal = var; \
-		for (int tmpByte; (tmpByte = getc(tmpFile)) != '\0';) { \
-			if (tmpByte == EOF) { \
-				fatal(__VA_ARGS__, feof(tmpFile) ? "Unexpected end of file" : strerror(errno)); \
-			} else { \
-				tmpVal.push_back(tmpByte); \
-			} \
-		} \
-	} while (0)
+// Reads a long from a file to a var, or errors out if it fails to.
+template<typename T>
+[[gnu::format(printf, 3, 4)]]
+static void tryReadLong(T &var, FILE *file, char const *fmt, ...) {
+	int64_t value = readLong(file);
+	if (value == INT64_MAX) {
+		va_list args;
+		va_start(args, fmt);
+		fatalRead(file, fmt, args);
+	}
+	var = static_cast<long>(value);
+}
+
+// Reads a byte from a file to a var, or errors out if it fails to.
+[[gnu::format(printf, 3, 4)]]
+static void tryGetc(uint8_t &var, FILE *file, char const *fmt, ...) {
+	int value = getc(file);
+	if (value == EOF) {
+		va_list args;
+		va_start(args, fmt);
+		fatalRead(file, fmt, args);
+	}
+	var = static_cast<uint8_t>(value);
+}
+
+// Reads a '\0'-terminated string from a file to a var, or errors out if it fails to.
+[[gnu::format(printf, 3, 4)]]
+static void tryReadString(std::string &var, FILE *file, char const *fmt, ...) {
+	for (int byte; (byte = getc(file)) != '\0';) {
+		if (byte == EOF) {
+			va_list args;
+			va_start(args, fmt);
+			fatalRead(file, fmt, args);
+		}
+		var.push_back(byte);
+	}
+}
 
 // Functions to parse object files
 
@@ -101,7 +131,7 @@ static void readFileStackNode(
 
 	uint32_t parentID;
 	tryReadLong(
-	    parentID, file, "%s: Cannot read node #%" PRIu32 "'s parent ID: %s", fileName, nodeID
+	    parentID, file, "%s: Cannot read node #%" PRIu32 "'s parent ID", fileName, nodeID
 	);
 	if (parentID == UINT32_MAX) {
 		node.parent = nullptr;
@@ -112,32 +142,32 @@ static void readFileStackNode(
 	}
 
 	tryReadLong(
-	    node.lineNo, file, "%s: Cannot read node #%" PRIu32 "'s line number: %s", fileName, nodeID
+	    node.lineNo, file, "%s: Cannot read node #%" PRIu32 "'s line number", fileName, nodeID
 	);
 
 	uint8_t typeAndQuiet;
-	tryGetc(typeAndQuiet, file, "%s: Cannot read node #%" PRIu32 "'s type: %s", fileName, nodeID);
+	tryGetc(typeAndQuiet, file, "%s: Cannot read node #%" PRIu32 "'s type", fileName, nodeID);
 	switch (uint8_t type = typeAndQuiet & ~(1 << FSTACKNODE_QUIET_BIT); type) {
 	case NODE_FILE:
 	case NODE_MACRO:
 		node.type = FileStackNodeType(type);
 		node.data = "";
 		tryReadString(
-		    node.name(), file, "%s: Cannot read node #%" PRIu32 "'s file name: %s", fileName, nodeID
+		    node.name(), file, "%s: Cannot read node #%" PRIu32 "'s file name", fileName, nodeID
 		);
 		break;
 	case NODE_REPT: {
 		node.type = NODE_REPT;
 		uint32_t depth;
 		tryReadLong(
-		    depth, file, "%s: Cannot read node #%" PRIu32 "'s REPT depth: %s", fileName, nodeID
+		    depth, file, "%s: Cannot read node #%" PRIu32 "'s REPT depth", fileName, nodeID
 		);
 		node.data = std::vector<uint32_t>(depth);
 		for (uint32_t i = 0; i < depth; ++i) {
 			tryReadLong(
 			    node.iters()[i],
 			    file,
-			    "%s: Cannot read node #%" PRIu32 "'s iter #%" PRIu32 ": %s",
+			    "%s: Cannot read node #%" PRIu32 "'s iter #%" PRIu32,
 			    fileName,
 			    nodeID,
 			    i
@@ -166,10 +196,10 @@ static void readFileStackNode(
 static void readSymbol(
     FILE *file, Symbol &symbol, char const *fileName, std::vector<FileStackNode> const &fileNodes
 ) {
-	tryReadString(symbol.name, file, "%s: Cannot read symbol name: %s", fileName);
+	tryReadString(symbol.name, file, "%s: Cannot read symbol name", fileName);
 
 	uint8_t type;
-	tryGetc(type, file, "%s: Cannot read `%s`'s type: %s", fileName, symbol.name.c_str());
+	tryGetc(type, file, "%s: Cannot read `%s`'s type", fileName, symbol.name.c_str());
 	if (type >= SYMTYPE_INVALID) {
 		fatal("%s: `%s` has unknown type 0x%02x", fileName, symbol.name.c_str(), type);
 	} else {
@@ -180,7 +210,7 @@ static void readSymbol(
 	if (symbol.type != SYMTYPE_IMPORT) {
 		uint32_t nodeID;
 		tryReadLong(
-		    nodeID, file, "%s: Cannot read `%s`'s node ID: %s", fileName, symbol.name.c_str()
+		    nodeID, file, "%s: Cannot read `%s`'s node ID", fileName, symbol.name.c_str()
 		);
 		if (nodeID >= fileNodes.size()) {
 			fatal("%s: `%s` has invalid node ID #%" PRIu32, fileName, symbol.name.c_str(), nodeID);
@@ -190,15 +220,15 @@ static void readSymbol(
 		tryReadLong(
 		    symbol.lineNo,
 		    file,
-		    "%s: Cannot read `%s`'s line number: %s",
+		    "%s: Cannot read `%s`'s line number",
 		    fileName,
 		    symbol.name.c_str()
 		);
 		int32_t sectionID, value;
 		tryReadLong(
-		    sectionID, file, "%s: Cannot read `%s`'s section ID: %s", fileName, symbol.name.c_str()
+		    sectionID, file, "%s: Cannot read `%s`'s section ID", fileName, symbol.name.c_str()
 		);
-		tryReadLong(value, file, "%s: Cannot read `%s`'s value: %s", fileName, symbol.name.c_str());
+		tryReadLong(value, file, "%s: Cannot read `%s`'s value", fileName, symbol.name.c_str());
 		if (sectionID == -1) {
 			symbol.data = value;
 		} else {
@@ -221,11 +251,11 @@ static void readSection(
 	int32_t tmp;
 	uint8_t byte;
 
-	tryReadString(section.name, file, "%s: Cannot read section name: %s", fileName);
+	tryReadString(section.name, file, "%s: Cannot read section name", fileName);
 
 	uint32_t nodeID;
 	tryReadLong(
-	    nodeID, file, "%s: Cannot read \"%s\"'s node ID: %s", fileName, section.name.c_str()
+	    nodeID, file, "%s: Cannot read \"%s\"'s node ID", fileName, section.name.c_str()
 	);
 	if (nodeID >= fileNodes.size()) {
 		fatal("%s: \"%s\" has invalid node ID #%" PRIu32, fileName, section.name.c_str(), nodeID);
@@ -235,11 +265,11 @@ static void readSection(
 	tryReadLong(
 	    section.lineNo,
 	    file,
-	    "%s: Cannot read \"%s\"'s line number: %s",
+	    "%s: Cannot read \"%s\"'s line number",
 	    fileName,
 	    section.name.c_str()
 	);
-	tryReadLong(tmp, file, "%s: Cannot read \"%s\"'s' size: %s", fileName, section.name.c_str());
+	tryReadLong(tmp, file, "%s: Cannot read \"%s\"'s' size", fileName, section.name.c_str());
 	if (tmp < 0 || tmp > UINT16_MAX) {
 		fatal(
 		    "%s: \"%s\"'s section size ($%" PRIx32 ") is invalid",
@@ -251,7 +281,7 @@ static void readSection(
 	section.size = tmp;
 	section.offset = 0;
 
-	tryGetc(byte, file, "%s: Cannot read \"%s\"'s type: %s", fileName, section.name.c_str());
+	tryGetc(byte, file, "%s: Cannot read \"%s\"'s type", fileName, section.name.c_str());
 	if (uint8_t type = byte & SECTTYPE_TYPE_MASK; type >= SECTTYPE_INVALID) {
 		fatal("%s: \"%s\" has unknown section type 0x%02x", fileName, section.name.c_str(), type);
 	} else {
@@ -265,7 +295,7 @@ static void readSection(
 	} else {
 		section.modifier = SECTION_NORMAL;
 	}
-	tryReadLong(tmp, file, "%s: Cannot read \"%s\"'s org: %s", fileName, section.name.c_str());
+	tryReadLong(tmp, file, "%s: Cannot read \"%s\"'s org", fileName, section.name.c_str());
 	if (tmp < 0) {
 		section.org.reset();
 	} else {
@@ -275,18 +305,18 @@ static void readSection(
 		}
 		section.org = static_cast<uint16_t>(tmp);
 	}
-	tryReadLong(tmp, file, "%s: Cannot read \"%s\"'s bank: %s", fileName, section.name.c_str());
+	tryReadLong(tmp, file, "%s: Cannot read \"%s\"'s bank", fileName, section.name.c_str());
 	if (tmp < 0) {
 		section.bank.reset();
 	} else {
 		section.bank = static_cast<uint32_t>(tmp);
 	}
-	tryGetc(byte, file, "%s: Cannot read \"%s\"'s alignment: %s", fileName, section.name.c_str());
+	tryGetc(byte, file, "%s: Cannot read \"%s\"'s alignment", fileName, section.name.c_str());
 	if (byte > 16) {
 		byte = 16;
 	}
 	tryReadLong(
-	    tmp, file, "%s: Cannot read \"%s\"'s alignment offset: %s", fileName, section.name.c_str()
+	    tmp, file, "%s: Cannot read \"%s\"'s alignment offset", fileName, section.name.c_str()
 	);
 	if (tmp > UINT16_MAX) {
 		error("\"%s\"'s alignment offset is too large ($%" PRIx32 ")", section.name.c_str(), tmp);
@@ -321,7 +351,7 @@ static void readSection(
 	tryReadLong(
 	    nbPatches,
 	    file,
-	    "%s: Cannot read \"%s\"'s number of patches: %s",
+	    "%s: Cannot read \"%s\"'s number of patches",
 	    fileName,
 	    section.name.c_str()
 	);
@@ -333,7 +363,7 @@ static void readSection(
 		tryReadLong(
 		    nodeID,
 		    file,
-		    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s node ID: %s",
+		    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s node ID",
 		    fileName,
 		    section.name.c_str(),
 		    patchID
@@ -352,7 +382,7 @@ static void readSection(
 		tryReadLong(
 		    patch.rpn.lineNo,
 		    file,
-		    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s line number: %s",
+		    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s line number",
 		    fileName,
 		    section.name.c_str(),
 		    patchID
@@ -360,7 +390,7 @@ static void readSection(
 		tryReadLong(
 		    patch.offset,
 		    file,
-		    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s offset: %s",
+		    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s offset",
 		    fileName,
 		    section.name.c_str(),
 		    patchID
@@ -368,7 +398,7 @@ static void readSection(
 		tryReadLong(
 		    patch.rpn.pcSectionID,
 		    file,
-		    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s PC offset: %s",
+		    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s PC offset",
 		    fileName,
 		    section.name.c_str(),
 		    patchID
@@ -376,7 +406,7 @@ static void readSection(
 		tryReadLong(
 		    patch.rpn.pcOffset,
 		    file,
-		    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s PC offset: %s",
+		    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s PC offset",
 		    fileName,
 		    section.name.c_str(),
 		    patchID
@@ -386,7 +416,7 @@ static void readSection(
 		tryGetc(
 		    type,
 		    file,
-		    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s type: %s",
+		    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s type",
 		    fileName,
 		    section.name.c_str(),
 		    patchID
@@ -416,7 +446,7 @@ static void readSection(
 		tryReadLong(
 		    rpnSize,
 		    file,
-		    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s RPN size: %s",
+		    "%s: Cannot read \"%s\"'s patch #%" PRIu32 "'s RPN size",
 		    fileName,
 		    section.name.c_str(),
 		    patchID
@@ -445,7 +475,7 @@ static void readAssertion(
 ) {
 	uint32_t nodeID;
 	tryReadLong(
-	    nodeID, file, "%s: Cannot read assertion #%" PRIu32 "'s node ID: %s", fileName, assertID
+	    nodeID, file, "%s: Cannot read assertion #%" PRIu32 "'s node ID", fileName, assertID
 	);
 	if (nodeID >= fileNodes.size()) {
 		fatal(
@@ -457,34 +487,34 @@ static void readAssertion(
 	tryReadLong(
 	    assert.rpn.lineNo,
 	    file,
-	    "%s: Cannot read assertion #%" PRIu32 "'s line number: %s",
+	    "%s: Cannot read assertion #%" PRIu32 "'s line number",
 	    fileName,
 	    assertID
 	);
 	tryReadLong(
 	    assert.offset,
 	    file,
-	    "%s: Cannot read assertion #%" PRIu32 "'s offset: %s",
+	    "%s: Cannot read assertion #%" PRIu32 "'s offset",
 	    fileName,
 	    assertID
 	);
 	tryReadLong(
 	    assert.rpn.pcSectionID,
 	    file,
-	    "%s: Cannot read assertion #%" PRIu32 "'s PC offset: %s",
+	    "%s: Cannot read assertion #%" PRIu32 "'s PC offset",
 	    fileName,
 	    assertID
 	);
 	tryReadLong(
 	    assert.rpn.pcOffset,
 	    file,
-	    "%s: Cannot read assertion #%" PRIu32 "'s PC offset: %s",
+	    "%s: Cannot read assertion #%" PRIu32 "'s PC offset",
 	    fileName,
 	    assertID
 	);
 
 	uint8_t type;
-	tryGetc(type, file, "%s: Cannot read assertion #%" PRIu32 "'s type: %s", fileName, assertID);
+	tryGetc(type, file, "%s: Cannot read assertion #%" PRIu32 "'s type", fileName, assertID);
 	if (type > ASSERT_FATAL) {
 		fatal("%s: assertion #%" PRIu32 " has unknown type 0x%02x", fileName, assertID, type);
 	} else {
@@ -493,7 +523,7 @@ static void readAssertion(
 
 	uint32_t rpnSize;
 	tryReadLong(
-	    rpnSize, file, "%s: Cannot read assertion #%" PRIu32 "'s RPN size: %s", fileName, assertID
+	    rpnSize, file, "%s: Cannot read assertion #%" PRIu32 "'s RPN size", fileName, assertID
 	);
 
 	assert.rpn.rpn.resize(rpnSize);
@@ -509,7 +539,7 @@ static void readAssertion(
 	tryReadString(
 	    assert.message,
 	    file,
-	    "%s: Cannot read assertion #%" PRIu32 "'s message: %s",
+	    "%s: Cannot read assertion #%" PRIu32 "'s message",
 	    fileName,
 	    assertID
 	);
@@ -575,7 +605,7 @@ void obj_ReadFile(std::string const &filePath, size_t fileID) {
 	verbosePrint(VERB_NOTICE, "Reading object file %s\n", fileName);
 
 	uint32_t revNum;
-	tryReadLong(revNum, file, "%s: Cannot read revision number: %s", fileName);
+	tryReadLong(revNum, file, "%s: Cannot read revision number", fileName);
 	if (revNum != RGBDS_OBJECT_REV) {
 		fatal(
 		    "%s: Unsupported object file for rgblink %s; try rebuilding \"%s\"%s"
@@ -590,13 +620,13 @@ void obj_ReadFile(std::string const &filePath, size_t fileID) {
 	}
 
 	uint32_t nbSymbols;
-	tryReadLong(nbSymbols, file, "%s: Cannot read number of symbols: %s", fileName);
+	tryReadLong(nbSymbols, file, "%s: Cannot read number of symbols", fileName);
 
 	uint32_t nbSections;
-	tryReadLong(nbSections, file, "%s: Cannot read number of sections: %s", fileName);
+	tryReadLong(nbSections, file, "%s: Cannot read number of sections", fileName);
 
 	uint32_t nbNodes;
-	tryReadLong(nbNodes, file, "%s: Cannot read number of nodes: %s", fileName);
+	tryReadLong(nbNodes, file, "%s: Cannot read number of nodes", fileName);
 	object.nodes.resize(nbNodes);
 	verbosePrint(VERB_INFO, "Reading %u nodes...\n", nbNodes);
 	for (uint32_t nodeID = nbNodes; nodeID--;) {
@@ -639,7 +669,7 @@ void obj_ReadFile(std::string const &filePath, size_t fileID) {
 	}
 
 	uint32_t nbAsserts;
-	tryReadLong(nbAsserts, file, "%s: Cannot read number of assertions: %s", fileName);
+	tryReadLong(nbAsserts, file, "%s: Cannot read number of assertions", fileName);
 	verbosePrint(VERB_INFO, "Reading %" PRIu32 " assertions...\n", nbAsserts);
 	for (uint32_t i = 0; i < nbAsserts; ++i) {
 		Assertion &assertion = patch_AddAssertion();
