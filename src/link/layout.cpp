@@ -14,34 +14,52 @@
 #include "link/section.hpp"
 #include "link/warning.hpp"
 
-static std::array<std::vector<uint16_t>, SECTTYPE_INVALID> curAddr;
-static SectionType activeType = SECTTYPE_INVALID; // Index into curAddr
-static uint32_t activeBankIdx;                    // Index into curAddr[activeType]
-static bool isPcFloating;
-static uint16_t floatingAlignMask;
-static uint16_t floatingAlignOffset;
+namespace {
 
-static void setActiveTypeAndIdx(SectionType type, uint32_t idx) {
-	activeType = type;
-	activeBankIdx = idx;
-	isPcFloating = false;
-	if (curAddr[activeType].size() <= activeBankIdx) {
-		curAddr[activeType].resize(activeBankIdx + 1, sectionTypeInfo[type].startAddr);
+struct LayoutState {
+	std::array<std::vector<uint16_t>, SECTTYPE_INVALID> curAddr;
+	SectionType activeType = SECTTYPE_INVALID; // Index into `curAddr`
+	uint32_t activeBankIdx = 0;                // Index into `curAddr[activeType]`
+	bool isPcFloating = false;
+	uint16_t floatingAlignMask = 0;
+	uint16_t floatingAlignOffset = 0;
+
+	void setActiveTypeAndIdx(SectionType type, uint32_t idx) {
+		activeType = type;
+		activeBankIdx = idx;
+		isPcFloating = false;
+		if (curAddr[activeType].size() <= activeBankIdx) {
+			curAddr[activeType].resize(activeBankIdx + 1, sectionTypeInfo[type].startAddr);
+		}
 	}
-}
+
+	void makeAddressFloating() {
+		isPcFloating = true;
+		floatingAlignMask = 0;
+		floatingAlignOffset = 0;
+	}
+
+	uint16_t &pc() {
+		assume(activeType != SECTTYPE_INVALID);
+		assume(activeBankIdx != UINT32_MAX);
+		return curAddr[activeType][activeBankIdx];
+	}
+};
+
+LayoutState layout;
+
+} // namespace
 
 void layout_SetFloatingSectionType(SectionType type) {
 	if (!sectionTypeInfo[type].isBanked()) {
 		// There is only a single bank anyway, so just set the index to 0.
-		setActiveTypeAndIdx(type, 0);
+		layout.setActiveTypeAndIdx(type, 0);
 	} else {
-		activeType = type;
-		activeBankIdx = UINT32_MAX;
+		layout.activeType = type;
+		layout.activeBankIdx = UINT32_MAX;
 		// Force PC to be floating for this kind of section.
 		// Because we wouldn't know how to index into `curAddr[activeType]`!
-		isPcFloating = true;
-		floatingAlignMask = 0;
-		floatingAlignOffset = 0;
+		layout.makeAddressFloating();
 	}
 }
 
@@ -51,7 +69,8 @@ void layout_SetSectionType(SectionType type) {
 		// Keep going with a default value for the bank index.
 	}
 
-	setActiveTypeAndIdx(type, 0); // There is only a single bank anyway, so just set the index to 0.
+	// There is only a single bank anyway, so just set the index to 0.
+	layout.setActiveTypeAndIdx(type, 0);
 }
 
 void layout_SetSectionType(SectionType type, uint32_t bank) {
@@ -75,22 +94,22 @@ void layout_SetSectionType(SectionType type, uint32_t bank) {
 		bank = typeInfo.lastBank;
 	}
 
-	setActiveTypeAndIdx(type, bank - typeInfo.firstBank);
+	layout.setActiveTypeAndIdx(type, bank - typeInfo.firstBank);
 }
 
 void layout_SetAddr(uint32_t addr) {
-	if (activeType == SECTTYPE_INVALID) {
+	if (layout.activeType == SECTTYPE_INVALID) {
 		scriptError("Cannot set the current address: no memory region is active");
 		return;
 	}
-	if (activeBankIdx == UINT32_MAX) {
+	if (layout.activeBankIdx == UINT32_MAX) {
 		scriptError("Cannot set the current address: the bank is floating");
 		return;
 	}
 
-	SectionTypeInfo const &typeInfo = sectionTypeInfo[activeType];
+	SectionTypeInfo const &typeInfo = sectionTypeInfo[layout.activeType];
 
-	if (uint16_t &pc = curAddr[activeType][activeBankIdx]; addr < pc) {
+	if (uint16_t &pc = layout.pc(); addr < pc) {
 		scriptError("Cannot decrease the current address (from $%04x to $%04x)", pc, addr);
 	} else if (addr > typeInfo.onePastEndAddr()) { // Allow "one past the end" zero-sized sections.
 		scriptError(
@@ -104,22 +123,20 @@ void layout_SetAddr(uint32_t addr) {
 		pc = addr;
 	}
 
-	isPcFloating = false;
+	layout.isPcFloating = false;
 }
 
 void layout_MakeAddrFloating() {
-	if (activeType == SECTTYPE_INVALID) {
+	if (layout.activeType == SECTTYPE_INVALID) {
 		scriptError("Cannot make the current address floating: no memory region is active");
 		return;
 	}
 
-	isPcFloating = true;
-	floatingAlignMask = 0;
-	floatingAlignOffset = 0;
+	layout.makeAddressFloating();
 }
 
 void layout_AlignTo(uint32_t alignment, uint32_t alignOfs) {
-	if (activeType == SECTTYPE_INVALID) {
+	if (layout.activeType == SECTTYPE_INVALID) {
 		scriptError("Cannot align: no memory region is active");
 		return;
 	}
@@ -142,18 +159,18 @@ void layout_AlignTo(uint32_t alignment, uint32_t alignOfs) {
 		return;
 	}
 
-	if (isPcFloating) {
+	if (layout.isPcFloating) {
 		if (alignment < 16) {
-			floatingAlignMask = alignMask;
-			floatingAlignOffset = alignOfs & alignMask;
+			layout.floatingAlignMask = alignMask;
+			layout.floatingAlignOffset = alignOfs & alignMask;
 		} else {
 			layout_SetAddr(alignOfs);
 		}
 		return;
 	}
 
-	SectionTypeInfo const &typeInfo = sectionTypeInfo[activeType];
-	uint16_t &pc = curAddr[activeType][activeBankIdx];
+	SectionTypeInfo const &typeInfo = sectionTypeInfo[layout.activeType];
+	uint16_t &pc = layout.pc();
 
 	// Let it wrap around, this'll trip the final check if alignment == 16.
 	uint16_t length = alignOfs - pc;
@@ -178,18 +195,19 @@ void layout_AlignTo(uint32_t alignment, uint32_t alignOfs) {
 }
 
 void layout_Pad(uint32_t length) {
-	if (activeType == SECTTYPE_INVALID) {
+	if (layout.activeType == SECTTYPE_INVALID) {
 		scriptError("Cannot increase the current address: no memory region is active");
 		return;
 	}
 
-	if (isPcFloating) {
-		floatingAlignOffset = (floatingAlignOffset + length) & floatingAlignMask;
+	if (layout.isPcFloating) {
+		layout.floatingAlignOffset =
+		    (layout.floatingAlignOffset + length) & layout.floatingAlignMask;
 		return;
 	}
 
-	SectionTypeInfo const &typeInfo = sectionTypeInfo[activeType];
-	uint16_t &pc = curAddr[activeType][activeBankIdx];
+	SectionTypeInfo const &typeInfo = sectionTypeInfo[layout.activeType];
+	uint16_t &pc = layout.pc();
 
 	assume(pc >= typeInfo.startAddr);
 	// `length + offset` can overflow `uint32_t`, so check just `length` first
@@ -207,7 +225,7 @@ void layout_Pad(uint32_t length) {
 }
 
 void layout_PlaceSection(std::string const &name, bool isOptional) {
-	if (activeType == SECTTYPE_INVALID) {
+	if (layout.activeType == SECTTYPE_INVALID) {
 		scriptError("No memory region has been specified to place section \"%s\" in", name.c_str());
 		return;
 	}
@@ -220,18 +238,18 @@ void layout_PlaceSection(std::string const &name, bool isOptional) {
 		return;
 	}
 
-	SectionTypeInfo const &typeInfo = sectionTypeInfo[activeType];
+	SectionTypeInfo const &typeInfo = sectionTypeInfo[layout.activeType];
 	assume(section->offset == 0);
 	// Check that the linker script doesn't contradict what the code says.
 	if (section->type == SECTTYPE_INVALID) {
 		// A section that has data must get assigned a type that requires data.
-		if (!sectTypeHasData(activeType) && !section->data.empty()) {
+		if (!sectTypeHasData(layout.activeType) && !section->data.empty()) {
 			scriptError(
 			    "\"%s\" is specified to be a %s section, but it contains data",
 			    name.c_str(),
 			    typeInfo.name
 			);
-		} else if (sectTypeHasData(activeType) && section->data.empty() && section->size != 0) {
+		} else if (sectTypeHasData(layout.activeType) && section->data.empty() && section->size != 0) {
 			// A section that lacks data can only be assigned to a type that requires data
 			// if it's empty.
 			scriptError(
@@ -242,10 +260,10 @@ void layout_PlaceSection(std::string const &name, bool isOptional) {
 		} else {
 			// SDCC areas don't have a type assigned yet, so the linker script gives them one.
 			for (Section &piece : section->pieces()) {
-				piece.type = activeType;
+				piece.type = layout.activeType;
 			}
 		}
-	} else if (section->type != activeType) {
+	} else if (section->type != layout.activeType) {
 		scriptError(
 		    "\"%s\" is specified to be a %s section, but it is already a %s section",
 		    name.c_str(),
@@ -255,8 +273,8 @@ void layout_PlaceSection(std::string const &name, bool isOptional) {
 	}
 
 	// Enforce a bank if one is active, but leave any existing constraint alone.
-	if (activeBankIdx != UINT32_MAX) {
-		uint32_t bank = activeBankIdx + typeInfo.firstBank;
+	if (layout.activeBankIdx != UINT32_MAX) {
+		uint32_t bank = layout.activeBankIdx + typeInfo.firstBank;
 		if (section->bank && bank != *section->bank) {
 			scriptError(
 			    "The linker script places section \"%s\" in %s bank %" PRIu32
@@ -270,8 +288,8 @@ void layout_PlaceSection(std::string const &name, bool isOptional) {
 		section->bank = bank;
 	}
 
-	if (!isPcFloating) {
-		uint16_t &org = curAddr[activeType][activeBankIdx];
+	if (!layout.isPcFloating) {
+		uint16_t &org = layout.pc();
 		if (section->org && org != *section->org) {
 			scriptError(
 			    "The linker script assigns section \"%s\" to address $%04" PRIx16
@@ -316,45 +334,46 @@ void layout_PlaceSection(std::string const &name, bool isOptional) {
 		}
 	} else {
 		if (section->org) {
-			if ((*section->org & floatingAlignMask) != floatingAlignOffset) {
-				int alignment = std::countr_one(floatingAlignMask);
+			if ((*section->org & layout.floatingAlignMask) != layout.floatingAlignOffset) {
+				int alignment = std::countr_one(layout.floatingAlignMask);
 				scriptError(
 				    "The linker script aligns floating section \"%s\" to ALIGN[%d, %" PRIu16
 				    "], but it was already at address $%04" PRIx16 " which has ALIGN[%d, %" PRIu16
 				    "]",
 				    name.c_str(),
 				    alignment,
-				    floatingAlignOffset,
+				    layout.floatingAlignOffset,
 				    *section->org,
 				    alignment,
-				    static_cast<uint16_t>(*section->org & floatingAlignMask)
+				    static_cast<uint16_t>(*section->org & layout.floatingAlignMask)
 				);
 			}
 		} else if (section->align) {
-			uint16_t commonMask = section->align->mask & floatingAlignMask;
-			if ((section->align->offset & commonMask) != (floatingAlignOffset & commonMask)) {
+			uint16_t commonMask = section->align->mask & layout.floatingAlignMask;
+			if ((section->align->offset & commonMask) != (layout.floatingAlignOffset & commonMask)) {
 				scriptError(
 				    "The linker script aligns floating section \"%s\" to ALIGN[%d, %" PRIu16
 				    "], but it already has requested ALIGN[%d, %" PRIu16 "]",
 				    name.c_str(),
-				    std::countr_one(floatingAlignMask),
-				    floatingAlignOffset,
+				    std::countr_one(layout.floatingAlignMask),
+				    layout.floatingAlignOffset,
 				    std::countr_one(section->align->mask),
 				    section->align->offset
 				);
-			} else if (floatingAlignMask > section->align->mask) {
+			} else if (layout.floatingAlignMask > section->align->mask) {
 				section->align = SectionAlignment{
-				    .mask = floatingAlignMask,
-				    .offset = floatingAlignOffset,
+				    .mask = layout.floatingAlignMask,
+				    .offset = layout.floatingAlignOffset,
 				};
 			}
-		} else if (floatingAlignMask != 0) {
+		} else if (layout.floatingAlignMask != 0) {
 			section->align = SectionAlignment{
-			    .mask = floatingAlignMask,
-			    .offset = floatingAlignOffset,
+			    .mask = layout.floatingAlignMask,
+			    .offset = layout.floatingAlignOffset,
 			};
 		}
 
-		floatingAlignOffset = (floatingAlignOffset + section->size) & floatingAlignMask;
+		layout.floatingAlignOffset =
+		    (layout.floatingAlignOffset + section->size) & layout.floatingAlignMask;
 	}
 }
