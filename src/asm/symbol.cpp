@@ -49,10 +49,15 @@ static InternedStr PCName;
 static InternedStr globalScopeName;
 static InternedStr localScopeName;
 
-static char savedTIME[256];
-static char savedDATE[256];
-static char savedTIMESTAMP_ISO8601_LOCAL[256];
-static char savedTIMESTAMP_ISO8601_UTC[256];
+static std::string savedTIME;
+static std::string savedDATE;
+static std::string savedTIMESTAMP_ISO8601_LOCAL;
+static std::string savedTIMESTAMP_ISO8601_UTC;
+
+static void formatTimestamp(std::string &timestamp, char const *format, tm const *time) {
+	timestamp.resize(256);
+	timestamp.resize(strftime(timestamp.data(), timestamp.size(), format, time));
+}
 
 bool sym_IsPC(Symbol const *sym) {
 	return sym == PCSymbol;
@@ -749,24 +754,14 @@ void sym_Init(time_t now) {
 	// LCOV_EXCL_STOP
 
 	if (tm const *time_local = localtime(&now); time_local != nullptr) {
-		strftime(savedTIME, sizeof(savedTIME), "\"%H:%M:%S\"", time_local);
-		strftime(savedDATE, sizeof(savedDATE), "\"%d %B %Y\"", time_local);
-		strftime(
-		    savedTIMESTAMP_ISO8601_LOCAL,
-		    sizeof(savedTIMESTAMP_ISO8601_LOCAL),
-		    "\"%Y-%m-%dT%H:%M:%S%z\"",
-		    time_local
-		);
+		formatTimestamp(savedTIME, "\"%H:%M:%S\"", time_local);
+		formatTimestamp(savedDATE, "\"%d %B %Y\"", time_local);
+		formatTimestamp(savedTIMESTAMP_ISO8601_LOCAL, "\"%Y-%m-%dT%H:%M:%S%z\"", time_local);
 	}
 
 	tm const *time_utc = gmtime(&now);
 	if (time_utc != nullptr) {
-		strftime(
-		    savedTIMESTAMP_ISO8601_UTC,
-		    sizeof(savedTIMESTAMP_ISO8601_UTC),
-		    "\"%Y-%m-%dT%H:%M:%SZ\"",
-		    time_utc
-		);
+		formatTimestamp(savedTIMESTAMP_ISO8601_UTC, "\"%Y-%m-%dT%H:%M:%SZ\"", time_utc);
 	}
 
 	Symbol *timeSymbol = &createSymbol(intern("__TIME__"));
