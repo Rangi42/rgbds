@@ -112,11 +112,9 @@ static void parseArg(int ch, char *arg) {
 	case 'C':
 	case 'c':
 		options.model = ch == 'c' ? BOTH : CGB;
-		if (options.titleLen > 15) {
-			options.titleLen = 15;
-			assume(options.title.has_value());
+		if (options.title.truncate(15)) {
 			warning(
-			    WARNING_TRUNCATION, "Truncating title \"%s\" to 15 chars", options.title->c_str()
+			    WARNING_TRUNCATION, "Truncating title \"%s\" to 15 chars", options.title.c_str()
 			);
 		}
 		break;
@@ -154,20 +152,18 @@ static void parseArg(int ch, char *arg) {
 		// LCOV_EXCL_STOP
 
 	case 'i': {
-		options.gameID = arg;
-		size_t len = options.gameID->length();
-		if (len > 4) {
-			len = 4;
+		options.gameID.assign(arg);
+		if (options.gameID.length() > options.gameID.maxLength) {
 			warning(
-			    WARNING_TRUNCATION, "Truncating game ID \"%s\" to 4 chars", options.gameID->c_str()
+			    WARNING_TRUNCATION,
+			    "Truncating game ID \"%s\" to %" PRIu8 " chars",
+			    options.gameID.c_str(),
+			    options.gameID.maxLength
 			);
 		}
-		options.gameIDLen = len;
-		if (options.titleLen > 11) {
-			options.titleLen = 11;
-			assume(options.title.has_value());
+		if (options.title.truncate(11)) {
 			warning(
-			    WARNING_TRUNCATION, "Truncating title \"%s\" to 11 chars", options.title->c_str()
+			    WARNING_TRUNCATION, "Truncating title \"%s\" to 11 chars", options.title.c_str()
 			);
 		}
 		break;
@@ -178,17 +174,15 @@ static void parseArg(int ch, char *arg) {
 		break;
 
 	case 'k': {
-		options.newLicensee = arg;
-		size_t len = options.newLicensee->length();
-		if (len > 2) {
-			len = 2;
+		options.newLicensee.assign(arg);
+		if (options.newLicensee.length() > options.newLicensee.maxLength) {
 			warning(
 			    WARNING_TRUNCATION,
-			    "Truncating new licensee \"%s\" to 2 chars",
-			    options.newLicensee->c_str()
+			    "Truncating new licensee \"%s\" to %" PRIu8 " chars",
+			    options.newLicensee.c_str(),
+			    options.newLicensee.maxLength
 			);
 		}
-		options.newLicenseeLen = len;
 		break;
 	}
 
@@ -233,20 +227,23 @@ static void parseArg(int ch, char *arg) {
 		break;
 
 	case 't': {
-		options.title = arg;
-		size_t len = options.title->length();
-		uint8_t maxLen = options.gameID ? 11 : options.model != DMG ? 15 : 16;
+		options.title.assign(arg);
+		uint8_t maxLen = options.title.maxLength;
+		if (options.gameID) {
+			maxLen = 11;
+		} else if (options.model != DMG) {
+			maxLen = 15;
+		}
 
-		if (len > maxLen) {
-			len = maxLen;
+		if (options.title.length() > maxLen) {
+			options.title.truncate(maxLen);
 			warning(
 			    WARNING_TRUNCATION,
 			    "Truncating title \"%s\" to %" PRIu8 " chars",
-			    options.title->c_str(),
+			    options.title.c_str(),
 			    maxLen
 			);
 		}
-		options.titleLen = len;
 		break;
 	}
 

@@ -145,8 +145,8 @@ static void
 		overwriteBytes(
 		    rom0,
 		    0x134,
-		    reinterpret_cast<uint8_t const *>(options.title->c_str()),
-		    options.titleLen,
+		    reinterpret_cast<uint8_t const *>(options.title.c_str()),
+		    options.title.size(),
 		    "title"
 		);
 	}
@@ -155,8 +155,8 @@ static void
 		overwriteBytes(
 		    rom0,
 		    0x13F,
-		    reinterpret_cast<uint8_t const *>(options.gameID->c_str()),
-		    options.gameIDLen,
+		    reinterpret_cast<uint8_t const *>(options.gameID.c_str()),
+		    options.gameID.size(),
 		    "manufacturer code"
 		);
 	}
@@ -169,8 +169,8 @@ static void
 		overwriteBytes(
 		    rom0,
 		    0x144,
-		    reinterpret_cast<uint8_t const *>(options.newLicensee->c_str()),
-		    options.newLicenseeLen,
+		    reinterpret_cast<uint8_t const *>(options.newLicensee.c_str()),
+		    options.newLicensee.size(),
 		    "new licensee code"
 		);
 	}

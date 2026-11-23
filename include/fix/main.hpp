@@ -4,6 +4,7 @@
 #define RGBDS_FIX_MAIN_HPP
 
 #include <optional>
+#include <stddef.h>
 #include <stdint.h>
 #include <string>
 
@@ -20,6 +21,36 @@ static constexpr uint8_t TRASH_GLOBAL_SUM = 1 << 2;
 
 enum Model { DMG, BOTH, CGB };
 
+// A header string option, together with the length to actually write to the ROM header.
+// `value` keeps the original argument so truncation warnings can report it in full.
+template<size_t MaxLength>
+struct HeaderString {
+	static constexpr uint8_t maxLength = MaxLength;
+
+	std::optional<std::string> value;
+	uint8_t len = 0;
+
+	explicit operator bool() const { return value.has_value(); }
+
+	char const *c_str() const { return value->c_str(); }
+	size_t length() const { return value->length(); }
+	uint8_t size() const { return len; }
+
+	void assign(char const *arg) {
+		value = arg;
+		size_t argLen = value->length();
+		len = static_cast<uint8_t>(argLen < MaxLength ? argLen : MaxLength);
+	}
+
+	bool truncate(uint8_t newLen) {
+		if (len <= newLen) {
+			return false;
+		}
+		len = newLen;
+		return true;
+	}
+};
+
 struct Options {
 	uint8_t fixSpec = 0;                // -f, -v
 	Model model = DMG;                  // -C, -c
@@ -30,11 +61,8 @@ struct Options {
 	uint16_t ramSize = UNSPECIFIED;     // -r
 	bool sgb = false;                   // -s
 
-	std::optional<std::string> gameID; // -i
-	uint8_t gameIDLen;
-
-	std::optional<std::string> newLicensee; // -k
-	uint8_t newLicenseeLen;
+	HeaderString<4> gameID;        // -i
+	HeaderString<2> newLicensee;   // -k
 
 	std::optional<std::string> logoFilename; // -L
 	uint8_t logo[48] = {};
@@ -42,8 +70,7 @@ struct Options {
 	MbcType cartridgeType = MBC_NONE; // -m
 	uint8_t tpp1Rev[2];
 
-	std::optional<std::string> title; // -t
-	uint8_t titleLen;
+	HeaderString<16> title; // -t
 };
 
 extern Options options;
