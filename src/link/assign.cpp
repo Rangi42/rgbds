@@ -5,6 +5,7 @@
 #include "link/assign.hpp"
 
 #include <algorithm>
+#include <array>
 #include <deque>
 #include <inttypes.h>
 #include <optional>
@@ -33,15 +34,7 @@ struct FreeSpace {
 	uint16_t addrOnePast() const { return address + size; }
 };
 
-// Table of free space for each bank
-static std::vector<std::deque<FreeSpace>> memory[SECTTYPE_INVALID];
 using FreeSpaceIter = std::deque<FreeSpace>::iterator;
-
-static std::deque<FreeSpace> &freeSpaceOfBank(Section const &section, uint32_t bank) {
-	assume(bank >= section.typeInfo().firstBank);
-	assume(bank <= section.typeInfo().lastBank);
-	return memory[section.type][bank - section.typeInfo().firstBank];
-}
 
 struct Scrambling {
 	uint16_t romxOfs = 0;
@@ -85,7 +78,23 @@ struct Scrambling {
 		return std::nullopt; // Dead code, but some compilers don't recognize that.
 	}
 };
-static Scrambling scrambling;
+
+// State tracked while assigning sections, organized by section type and bank.
+struct MemoryState {
+	std::array<std::vector<std::deque<FreeSpace>>, SECTTYPE_INVALID> freeSpace{};
+	Scrambling scrambling{};
+
+	std::deque<FreeSpace> &freeSpaceOfBank(Section const &section, uint32_t bank) {
+		assume(bank >= section.typeInfo().firstBank);
+		assume(bank <= section.typeInfo().lastBank);
+		return freeSpace[section.type][bank - section.typeInfo().firstBank];
+	}
+};
+static MemoryState memoryState;
+
+static std::deque<FreeSpace> &freeSpaceOfBank(Section const &section, uint32_t bank) {
+	return memoryState.freeSpaceOfBank(section, bank);
+}
 
 struct MemoryLocation {
 	uint16_t address;
@@ -103,7 +112,7 @@ struct MemoryLocation {
 		} else {
 			location.bank = section.typeInfo().firstBank;
 
-			if (auto info = scrambling.getInfoFor(section.type);
+			if (auto info = memoryState.scrambling.getInfoFor(section.type);
 			    info.has_value() && info->maxOfs != 0) { // If scrambling is enabled...
 				// ...then we will begin the search from a different offset for each section.
 				// Go to the next offset (backwards), wrapping around. (Thus, no underflow!)
@@ -125,7 +134,7 @@ struct MemoryLocation {
 
 		// Try scrambled banks in descending order until no bank in the scrambled range is
 		// available.
-		if (auto info = scrambling.getInfoFor(section.type);
+		if (auto info = memoryState.scrambling.getInfoFor(section.type);
 		    info.has_value() && info->maxOfs != 0) {
 			// All floating sections within a scrambled region should be
 			// within the scrambled bank pool.
@@ -314,7 +323,7 @@ static std::string describeConstraintsOf(Section const &section) {
 			description = description + "anywhere";
 		}
 
-		if (auto info = scrambling.getInfoFor(section.type);
+		if (auto info = memoryState.scrambling.getInfoFor(section.type);
 		    info.has_value() && info->maxOfs != 0) { // Only mention scrambling if it is enabled.
 			char size[6];
 			sprintf_to_array(size, "%" PRIu16, info->maxOfs);
@@ -468,8 +477,8 @@ void assign_AssignSections() {
 	// Initialize the free space-modelling structs
 	for (SectionType type : EnumSeq(SECTTYPE_INVALID)) {
 		SectionTypeInfo const &typeInfo = sectionTypeInfo[type];
-		memory[type].resize(typeInfo.nbBanks());
-		for (std::deque<FreeSpace> &bankMem : memory[type]) {
+		memoryState.freeSpace[type].resize(typeInfo.nbBanks());
+		for (std::deque<FreeSpace> &bankMem : memoryState.freeSpace[type]) {
 			bankMem.push_back({
 			    .address = typeInfo.startAddr,
 			    .size = typeInfo.size,
