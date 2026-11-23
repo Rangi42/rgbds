@@ -32,8 +32,10 @@ struct Expansion {
 };
 
 struct ContentSpan {
-	std::shared_ptr<char[]> ptr;
-	size_t size;
+	// Keeps the storage that `ptr` points into alive; null for externally owned text
+	std::shared_ptr<std::vector<char>> owner;
+	char const *ptr = nullptr;
+	size_t size = 0;
 };
 
 struct IfStackEntry {
