@@ -98,13 +98,32 @@ static size_t skipBlankSpace(char const *str) {
 }
 
 static void parseScrambleSpec(char *spec) {
-	// clang-format off: vertically align nested initializers
-	static UpperMap<std::pair<uint16_t *, uint16_t>> scrambleSpecs{
-	    {"ROMX",  std::pair{&options.scrambleROMX,  65535}},
-	    {"SRAM",  std::pair{&options.scrambleSRAM,  256  }},
-	    {"WRAMX", std::pair{&options.scrambleWRAMX, 7    }},
-	};
-	// clang-format on
+	static UpperMap<std::pair<uint16_t *, uint16_t>> const scrambleSpecs = [] {
+		UpperMap<std::pair<uint16_t *, uint16_t>> map;
+		for (SectionType type : sectionTypes) {
+			uint16_t *limit;
+			switch (type) {
+			case SECTTYPE_ROMX:
+				limit = &options.scrambleROMX;
+				break;
+			case SECTTYPE_SRAM:
+				limit = &options.scrambleSRAM;
+				break;
+			case SECTTYPE_WRAMX:
+				limit = &options.scrambleWRAMX;
+				break;
+			default:
+				continue;
+			}
+			map.emplace(
+			    sectionTypeInfo[type].name,
+			    std::pair<uint16_t *, uint16_t>{
+			        limit, static_cast<uint16_t>(sectionTypeInfo[type].nbBanks())
+			    }
+			);
+		}
+		return map;
+	}();
 
 	// Skip leading blank space before the regions.
 	spec += skipBlankSpace(spec);

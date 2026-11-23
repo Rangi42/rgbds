@@ -238,16 +238,13 @@ yy::parser::symbol_type yylex() {
 	} else if (isLetter(c)) {
 		std::string keyword = readKeyword(c);
 
-		static UpperMap<SectionType> const sectTypes{
-		    {"WRAM0", SECTTYPE_WRAM0},
-		    {"VRAM",  SECTTYPE_VRAM },
-		    {"ROMX",  SECTTYPE_ROMX },
-		    {"ROM0",  SECTTYPE_ROM0 },
-		    {"HRAM",  SECTTYPE_HRAM },
-		    {"WRAMX", SECTTYPE_WRAMX},
-		    {"SRAM",  SECTTYPE_SRAM },
-		    {"OAM",   SECTTYPE_OAM  },
-		};
+		static UpperMap<SectionType> const sectTypes = [] {
+			UpperMap<SectionType> map;
+			for (SectionType type : sectionTypes) {
+				map.emplace(sectionTypeInfo[type].name, type);
+			}
+			return map;
+		}();
 		if (auto search = sectTypes.find(keyword); search != sectTypes.end()) {
 			return yy::parser::make_sect_type(search->second);
 		}

@@ -74,7 +74,8 @@ struct Token {
 
 // This map lists all RGBASM keywords which `yylex_NORMAL` lexes as identifiers.
 // All non-identifier tokens are lexed separately.
-static UpperMap<int> const keywords{
+static UpperMap<int> const keywords = [] {
+	UpperMap<int> keywords{
     {"ADC",           T_(SM83_ADC)         },
     {"ADD",           T_(SM83_ADD)         },
     {"AND",           T_(SM83_AND)         },
@@ -250,15 +251,6 @@ static UpperMap<int> const keywords{
     {"NEXTU",         T_(POP_NEXTU)        },
     {"ENDU",          T_(POP_ENDU)         },
 
-    {"WRAM0",         T_(SECT_WRAM0)       },
-    {"VRAM",          T_(SECT_VRAM)        },
-    {"ROMX",          T_(SECT_ROMX)        },
-    {"ROM0",          T_(SECT_ROM0)        },
-    {"HRAM",          T_(SECT_HRAM)        },
-    {"WRAMX",         T_(SECT_WRAMX)       },
-    {"SRAM",          T_(SECT_SRAM)        },
-    {"OAM",           T_(SECT_OAM)         },
-
     {"RB",            T_(POP_RB)           },
     {"RW",            T_(POP_RW)           },
     // There is no `T_(POP_RL)`; it's handled before as `T_(SM83_RL)`
@@ -273,7 +265,23 @@ static UpperMap<int> const keywords{
     {"POPO",          T_(POP_POPO)         },
 
     {"OPT",           T_(POP_OPT)          },
-};
+	};
+
+	static int const sectionTypeTokens[SECTTYPE_INVALID] = {
+	    T_(SECT_WRAM0),
+	    T_(SECT_VRAM),
+	    T_(SECT_ROMX),
+	    T_(SECT_ROM0),
+	    T_(SECT_HRAM),
+	    T_(SECT_WRAMX),
+	    T_(SECT_SRAM),
+	    T_(SECT_OAM),
+	};
+	for (SectionType type : sectionTypes) {
+		keywords.emplace(sectionTypeInfo[type].name, sectionTypeTokens[type]);
+	}
+	return keywords;
+}();
 
 static LexerState *lexerState = nullptr;
 static LexerState *lexerStateEOL = nullptr;

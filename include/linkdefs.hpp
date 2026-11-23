@@ -3,6 +3,7 @@
 #ifndef RGBDS_LINKDEFS_HPP
 #define RGBDS_LINKDEFS_HPP
 
+#include <array>
 #include <stdint.h>
 
 #include "helpers.hpp" // assume
@@ -75,6 +76,30 @@ enum SectionType {
 	// In RGBLINK, this is used for "indeterminate" sections; this is primarily for SDCC
 	// areas, which do not carry any section type info and must be told from the linker script
 	SECTTYPE_INVALID
+};
+
+// All valid section types, in enum order; the order matters for object file compatibility
+constexpr std::array<SectionType, SECTTYPE_INVALID> sectionTypes{
+    SECTTYPE_WRAM0,
+    SECTTYPE_VRAM,
+    SECTTYPE_ROMX,
+    SECTTYPE_ROM0,
+    SECTTYPE_HRAM,
+    SECTTYPE_WRAMX,
+    SECTTYPE_SRAM,
+    SECTTYPE_OAM,
+};
+
+// The order in which section types appear in RGBLINK's map and sym files
+constexpr std::array<SectionType, SECTTYPE_INVALID> sectionTypesForOutput{
+    SECTTYPE_ROM0,
+    SECTTYPE_ROMX,
+    SECTTYPE_VRAM,
+    SECTTYPE_SRAM,
+    SECTTYPE_WRAM0,
+    SECTTYPE_WRAMX,
+    SECTTYPE_OAM,
+    SECTTYPE_HRAM,
 };
 
 static constexpr uint8_t SECTTYPE_TYPE_MASK = 0b111;
