@@ -25,6 +25,9 @@ struct FileStackNode {
 	// Line at which the parent context was exited; meaningless for the root level
 	uint32_t lineNo;
 
+	// Non-owning view of the parent, for code shared with RGBASM's file stack nodes
+	FileStackNode const *parentNode() const { return parent; }
+
 	// REPT iteration counts since last named node, in reverse depth order
 	std::vector<uint32_t> &iters() { return std::get<std::vector<uint32_t>>(data); }
 	std::vector<uint32_t> const &iters() const { return std::get<std::vector<uint32_t>>(data); }

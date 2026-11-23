@@ -35,6 +35,9 @@ struct FileStackNode {
 	uint32_t ID = UINT32_MAX; // ID of the node in the object file (`UINT32_MAX` if none)
 	bool isReferenced() const { return ID != UINT32_MAX; }
 
+	// Non-owning view of the parent, for code shared with RGBLINK's file stack nodes
+	FileStackNode const *parentNode() const { return parent.get(); }
+
 	// REPT iteration counts since last named node, in reverse depth order
 	std::vector<uint32_t> &iters() { return std::get<std::vector<uint32_t>>(data); }
 	std::vector<uint32_t> const &iters() const { return std::get<std::vector<uint32_t>>(data); }
