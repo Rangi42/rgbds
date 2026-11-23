@@ -103,12 +103,12 @@ struct MemoryLocation {
 	static MemoryLocation initFor(Section const &section) {
 		MemoryLocation location;
 
-		if (section.isAddressFixed) { // This will never change.
-			location.address = section.org;
+		if (section.org) { // This will never change.
+			location.address = *section.org;
 		}
 
-		if (section.isBankFixed) {
-			location.bank = section.bank;
+		if (section.bank) {
+			location.bank = *section.bank;
 		} else {
 			location.bank = section.typeInfo().firstBank;
 
@@ -130,7 +130,7 @@ struct MemoryLocation {
 		assume(bank >= section.typeInfo().firstBank);
 		assume(bank <= section.typeInfo().lastBank);
 
-		assume(!section.isBankFixed);
+		assume(!section.bank);
 
 		// Try scrambled banks in descending order until no bank in the scrambled range is
 		// available.
@@ -169,10 +169,10 @@ struct MemoryLocation {
 static FreeSpaceIter tryPlacingInBank(Section const &section, MemoryLocation &location) {
 	std::deque<FreeSpace> &bankMem = freeSpaceOfBank(section, location.bank);
 
-	if (section.isAddressFixed) {
+	if (section.org) {
 		// There is only one candidate location in this bank: the address at which the section is
 		// fixed.
-		assume(location.address == section.org);
+		assume(location.address == *section.org);
 
 		FreeSpaceIter iter = std::find_if(RANGE(bankMem), [&location](FreeSpace const &freeSpace) {
 			// If they both exactly match, that means the next block will begin past the requested
@@ -195,8 +195,8 @@ static FreeSpaceIter tryPlacingInBank(Section const &section, MemoryLocation &lo
 		// no other address in the block will do; thus, we make only one attempt per block.
 		return std::find_if(RANGE(bankMem), [&location, &section](FreeSpace const &freeSpace) {
 			location.address = freeSpace.address;
-			if (section.isAlignFixed) {
-				location.makeAddressAligned(section.alignMask, section.alignOfs);
+			if (section.align) {
+				location.makeAddressAligned(section.align->mask, section.align->offset);
 				// Did it advance past the block? Or, rarely, overflowed?
 				if (location.address >= freeSpace.addrOnePast()
 				    || location.address < freeSpace.address) {
@@ -219,8 +219,8 @@ static FreeSpaceIter tryPlacingInBank(Section const &section, MemoryLocation &lo
 // The iterator is an end iterator if and only if no suitable location was found.
 // `location` is updated accordingly.
 static FreeSpaceIter tryPlacing(Section const &section, MemoryLocation &location) {
-	if (section.isBankFixed) {
-		assume(location.bank == section.bank);
+	if (section.bank) {
+		assume(location.bank == *section.bank);
 		return tryPlacingInBank(section, location);
 	}
 
@@ -237,12 +237,12 @@ static FreeSpaceIter tryPlacing(Section const &section, MemoryLocation &location
 
 static void
     updateFreeSpace(FreeSpaceIter iter, std::deque<FreeSpace> &bankMem, Section const &section) {
-	assume(section.org + section.size <= UINT16_MAX);
-	uint16_t sectionEnd = section.org + section.size;
-	assume(section.org >= iter->address);
+	assume(*section.org + section.size <= UINT16_MAX);
+	uint16_t sectionEnd = *section.org + section.size;
+	assume(*section.org >= iter->address);
 	assume(sectionEnd <= iter->addrOnePast());
 
-	bool noLeftSpace = iter->address == section.org;
+	bool noLeftSpace = iter->address == *section.org;
 	bool noRightSpace = iter->address + iter->size == sectionEnd;
 	if (noLeftSpace && noRightSpace) {
 		// The free space is entirely deleted
@@ -251,7 +251,7 @@ static void
 		// The free space is split in two
 		uint16_t size = static_cast<uint16_t>(iter->address + iter->size - sectionEnd);
 		// Resize the original space (address is unmodified)
-		iter->size = section.org - iter->address;
+		iter->size = *section.org - iter->address;
 		// Append the new space after the original one
 		bankMem.insert(iter + 1, {.address = sectionEnd, .size = size});
 		// `iter` cannot be reused from this point on, because `bankMem.insert`
@@ -275,13 +275,13 @@ static void assignSection(Section &section, MemoryLocation const &location) {
 	assume(location.address + section.size >= section.typeInfo().startAddr);
 	assume(location.address + section.size <= section.typeInfo().onePastEndAddr());
 
-	if (section.isAddressFixed) {
-		assume(location.address == section.org);
-	} else if (section.isAlignFixed) {
-		assume((location.address & section.alignMask) == section.alignOfs);
+	if (section.org) {
+		assume(location.address == *section.org);
+	} else if (section.align) {
+		assume((location.address & section.align->mask) == section.align->offset);
 	}
-	if (section.isBankFixed) {
-		assume(location.bank == section.bank);
+	if (section.bank) {
+		assume(location.bank == *section.bank);
 	}
 
 	// Propagate the assigned location to all UNIONs/FRAGMENTs
@@ -295,29 +295,29 @@ static void assignSection(Section &section, MemoryLocation const &location) {
 
 static std::string describeConstraintsOf(Section const &section) {
 	std::string description = "\"" + section.name + "\" (" + section.typeInfo().name + " section) ";
-	if (section.isBankFixed && section.typeInfo().isBanked()) {
+	if (section.bank && section.typeInfo().isBanked()) {
 		char bank[9];
-		sprintf_to_array(bank, "%02" PRIx32, section.bank);
-		if (section.isAddressFixed) {
+		sprintf_to_array(bank, "%02" PRIx32, *section.bank);
+		if (section.org) {
 			char addr[5];
-			sprintf_to_array(addr, "%04" PRIx16, section.org);
+			sprintf_to_array(addr, "%04" PRIx16, *section.org);
 			description = description + "at $" + bank + ":" + addr;
-		} else if (section.isAlignFixed) {
+		} else if (section.align) {
 			char mask[5];
-			sprintf_to_array(mask, "%" PRIx16, static_cast<uint16_t>(~section.alignMask));
+			sprintf_to_array(mask, "%" PRIx16, static_cast<uint16_t>(~section.align->mask));
 			description = description + "in bank $" + bank + " with align mask $" + mask;
 		} else {
 			description = description + "in bank $" + bank;
 		}
 	} else {
-		if (section.isAddressFixed) {
+		if (section.org) {
 			char addr[5];
-			sprintf_to_array(addr, "%04" PRIx16, section.org);
+			sprintf_to_array(addr, "%04" PRIx16, *section.org);
 			description = description + "at address $" + addr;
-		} else if (section.isAlignFixed) {
+		} else if (section.align) {
 			char mask[5], offset[5];
-			sprintf_to_array(mask, "%" PRIx16, static_cast<uint16_t>(~section.alignMask));
-			sprintf_to_array(offset, "%" PRIx16, section.alignOfs);
+			sprintf_to_array(mask, "%" PRIx16, static_cast<uint16_t>(~section.align->mask));
+			sprintf_to_array(offset, "%" PRIx16, section.align->offset);
 			description = description + "with align mask $" + mask + " and offset $" + offset;
 		} else {
 			description = description + "anywhere";
@@ -341,10 +341,10 @@ static void placeSection(Section &section) {
 
 	// Specially handle 0-byte SECTIONs, as they ignore free space entirely.
 	if (section.size == 0) {
-		if (!section.isAddressFixed) {
+		if (!section.org) {
 			location.address = section.typeInfo().startAddr;
-			if (section.isAlignFixed) {
-				location.makeAddressAligned(section.alignMask, section.alignOfs);
+			if (section.align) {
+				location.makeAddressAligned(section.align->mask, section.align->offset);
 			}
 		}
 
@@ -369,15 +369,15 @@ static void placeSection(Section &section) {
 		return;
 	}
 
-	if (!section.isBankFixed || !section.isAddressFixed) {
+	if (!section.bank || !section.org) {
 		// If a section failed to go to several places, nothing we can report
 		fatal("Unable to place %s", describeConstraintsOf(section).c_str());
-	} else if (section.org + section.size > section.typeInfo().onePastEndAddr()) {
+	} else if (*section.org + section.size > section.typeInfo().onePastEndAddr()) {
 		// If the section just can't fit the bank, report that
 		fatal(
 		    "Unable to place %s: section runs past end of region ($%04x > $%04x)",
 		    describeConstraintsOf(section).c_str(),
-		    section.org + section.size,
+		    *section.org + section.size,
 		    section.typeInfo().onePastEndAddr()
 		);
 	} else {
@@ -400,19 +400,19 @@ static void categorizeSection(Section &section) {
 	// Insert section while keeping the list sorted by decreasing constraints, alignment, and size.
 	auto const compareSections = [](Section const *prev, Section const &sect) {
 		// Sort more-constrained sections first (bank > address > alignment).
-		if (prev->isBankFixed != sect.isBankFixed) {
-			return prev->isBankFixed > sect.isBankFixed;
+		if (prev->bank.has_value() != sect.bank.has_value()) {
+			return prev->bank.has_value() > sect.bank.has_value();
 		}
-		if (prev->isAddressFixed != sect.isAddressFixed) {
-			return prev->isAddressFixed > sect.isAddressFixed;
+		if (prev->org.has_value() != sect.org.has_value()) {
+			return prev->org.has_value() > sect.org.has_value();
 		}
-		if (prev->isAlignFixed != sect.isAlignFixed) {
-			return prev->isAlignFixed > sect.isAlignFixed;
+		if (prev->align.has_value() != sect.align.has_value()) {
+			return prev->align.has_value() > sect.align.has_value();
 		}
 		// For equally-constrained sections, sort more-aligned ones first.
-		assume(prev->isAlignFixed == sect.isAlignFixed);
-		if (sect.isAlignFixed && prev->alignMask != sect.alignMask) {
-			return prev->alignMask > sect.alignMask;
+		assume(prev->align.has_value() == sect.align.has_value());
+		if (sect.align && prev->align->mask != sect.align->mask) {
+			return prev->align->mask > sect.align->mask;
 		}
 		// For equally-aligned sections, sort larger ones first.
 		return prev->size > sect.size;
@@ -428,7 +428,7 @@ static void checkOverlayCompat() {
 	size_t nbUnlisted = 0;
 
 	for (Section const *section : unassignedSections) {
-		if (section->isBankFixed && section->isAddressFixed) {
+		if (section->bank && section->org) {
 			continue;
 		}
 
@@ -440,12 +440,12 @@ static void checkOverlayCompat() {
 		unfixedList += "\n- \"";
 		unfixedList += section->name;
 		unfixedList += "\" (";
-		if (!section->isBankFixed && !section->isAddressFixed) {
+		if (!section->bank && !section->org) {
 			unfixedList += "bank and address";
-		} else if (!section->isBankFixed) {
+		} else if (!section->bank) {
 			unfixedList += "bank";
 		} else {
-			assume(!section->isAddressFixed);
+			assume(!section->org);
 			unfixedList += "address";
 		}
 		unfixedList += " not specified)";

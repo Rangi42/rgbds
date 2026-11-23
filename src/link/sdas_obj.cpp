@@ -306,11 +306,9 @@ void sdobj_ReadFile(FileStackNode const &src, FILE *file, std::vector<Symbol> &f
 			if (tmp & (1 << AREA_PAGING)) {
 				fatalAt(where, "Paging is not supported");
 			}
-			curSection->isAddressFixed = tmp & (1 << AREA_ISABS);
-			curSection->isBankFixed = curSection->isAddressFixed;
-			curSection->modifier = curSection->isAddressFixed || (tmp & (1 << AREA_TYPE))
-			                           ? SECTION_NORMAL
-			                           : SECTION_FRAGMENT;
+			bool const isAbsolute = tmp & (1 << AREA_ISABS);
+			curSection->modifier = isAbsolute || (tmp & (1 << AREA_TYPE)) ? SECTION_NORMAL
+			                                                             : SECTION_FRAGMENT;
 			// If the section is absolute, its name might not be unique; thus, mangle the name
 			if (curSection->modifier == SECTION_NORMAL) {
 				curSection->name.append(where.src->name());
@@ -322,15 +320,21 @@ void sdobj_ReadFile(FileStackNode const &src, FILE *file, std::vector<Symbol> &f
 
 			expectNext(nullptr, 'A');
 			tmp = readInt(where, token, numberBase);
-			curSection->org = tmp; // Truncation keeps the address portion only
-			curSection->bank = tmp >> 16;
+			if (isAbsolute) {
+				// Truncation keeps the address portion only
+				curSection->org = static_cast<uint16_t>(tmp);
+				curSection->bank = static_cast<uint32_t>(tmp >> 16);
+			} else {
+				curSection->org.reset();
+				curSection->bank.reset();
+			}
 
 			expectEol('A');
 
 			// Init the rest of the members
 			curSection->offset = 0;
-			if (curSection->isAddressFixed) {
-				uint8_t high = curSection->org >> 8;
+			if (curSection->org) {
+				uint8_t high = *curSection->org >> 8;
 
 				if (high < 0x40) {
 					curSection->type = SECTTYPE_ROM0;
@@ -354,7 +358,7 @@ void sdobj_ReadFile(FileStackNode const &src, FILE *file, std::vector<Symbol> &f
 			} else {
 				curSection->type = SECTTYPE_INVALID; // This means "indeterminate"
 			}
-			curSection->isAlignFixed = false;       // No such concept!
+			curSection->align.reset();              // No such concept!
 			curSection->fileSymbols = &fileSymbols; // IDs are instead per-section
 			curSection->nextPiece = nullptr;
 
@@ -387,9 +391,9 @@ void sdobj_ReadFile(FileStackNode const &src, FILE *file, std::vector<Symbol> &f
 			if (int32_t value = readInt(where, &token[3], numberBase); !fileSections.empty()) {
 				// Symbols in sections are labels; their value is an offset
 				Section *section = fileSections.back().section.get();
-				if (section->isAddressFixed) {
-					assume(value >= section->org && value <= section->org + section->size);
-					value -= section->org;
+				if (section->org) {
+					assume(value >= *section->org && value <= *section->org + section->size);
+					value -= *section->org;
 				}
 				// No need to set the `sectionID`, since we set the pointer
 				symbol.data = Label{.sectionID = 0, .offset = value, .section = section};
@@ -421,8 +425,8 @@ void sdobj_ReadFile(FileStackNode const &src, FILE *file, std::vector<Symbol> &f
 					auto [symbolSection, symbolValue] = checkSymbol(symbol);
 					auto [otherSection, otherValue] = checkSymbol(*other);
 
-					if ((otherSection && !otherSection->isAddressFixed)
-					    || (symbolSection && !symbolSection->isAddressFixed)) {
+					if ((otherSection && !otherSection->org)
+					    || (symbolSection && !symbolSection->org)) {
 						sym_AddSymbol(symbol); // This will error out
 					} else if (otherValue != symbolValue) {
 						fatalTwoAt(
@@ -497,18 +501,18 @@ void sdobj_ReadFile(FileStackNode const &src, FILE *file, std::vector<Symbol> &f
 			uint8_t writtenOfs = addrSize; // Bytes before this have been written to `->data`
 			uint16_t addr = data[0] | data[1] << 8;
 
-			if (section->isAddressFixed) {
-				if (addr < section->org) {
+			if (section->org) {
+				if (addr < *section->org) {
 					fatalAt(
 					    where,
 					    "'T' line reports address $%04" PRIx16
 					    " in \"%s\", which starts at $%04" PRIx16,
 					    addr,
 					    section->name.c_str(),
-					    section->org
+					    *section->org
 					);
 				}
-				addr -= section->org;
+				addr -= *section->org;
 			}
 			// Lines are emitted that violate this check but contain no "payload";
 			// ignore those. "Empty" lines shouldn't trigger allocation, either.
@@ -700,8 +704,8 @@ void sdobj_ReadFile(FileStackNode const &src, FILE *file, std::vector<Symbol> &f
 					// address from `baseValue`, undoing what the assembler did;
 					// this allows the relocation to still be correct, even if
 					// the section gets moved for any reason.
-					if (fileSections[idx].section->isAddressFixed) {
-						baseValue -= fileSections[idx].section->org;
+					if (fileSections[idx].section->org) {
+						baseValue -= *fileSections[idx].section->org;
 					}
 					std::string const &name = fileSections[idx].section->name;
 					Section const *other = sect_GetSection(name);
@@ -853,7 +857,7 @@ void sdobj_ReadFile(FileStackNode const &src, FILE *file, std::vector<Symbol> &f
 		// RAM sections can have a size, but don't get any data (they shouldn't have any)
 		if (section->type != SECTTYPE_INVALID) {
 			// Otherwise, how would the type already be known at this point?
-			assume(section->isAddressFixed);
+			assume(section->org.has_value());
 
 			if (!sectTypeHasData(section->type)) {
 				if (!section->data.empty()) {
@@ -863,7 +867,7 @@ void sdobj_ReadFile(FileStackNode const &src, FILE *file, std::vector<Symbol> &f
 					    "), but it has data! (Was a bad `__at()` value used?)",
 					    section->name.c_str(),
 					    section->typeInfo().name,
-					    section->org
+					    *section->org
 					);
 				}
 			} else if (section->size != 0 && section->data.empty()) {
@@ -873,7 +877,7 @@ void sdobj_ReadFile(FileStackNode const &src, FILE *file, std::vector<Symbol> &f
 				    "), but it doesn't have any data! (Was a bad `__at()` value used?)",
 				    section->name.c_str(),
 				    section->typeInfo().name,
-				    section->org
+				    *section->org
 				);
 			}
 		}

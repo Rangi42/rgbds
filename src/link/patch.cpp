@@ -144,7 +144,7 @@ static int32_t getBankSym(RPNContext &ctx, uint8_t const *&rpnBuffer, int32_t &s
 			);
 			return 0;
 		}
-		return label.section->bank;
+		return label.section->assignedBank();
 	}
 	ctx.rpnErrorAt(
 	    "Requested `BANK()` of non-label symbol `%s`", ctx.fileSymbols[symID].name.c_str()
@@ -159,7 +159,7 @@ static int32_t getBankSect(RPNContext &ctx, uint8_t const *&rpnBuffer, int32_t &
 		ctx.rpnErrorAt("Requested `BANK()` of undefined section \"%s\"", name);
 		return 1;
 	}
-	return sect->bank;
+	return sect->assignedBank();
 }
 
 static int32_t getBankSelf(RPNContext &ctx, uint8_t const *&, int32_t &) {
@@ -167,7 +167,7 @@ static int32_t getBankSelf(RPNContext &ctx, uint8_t const *&, int32_t &) {
 		ctx.rpnErrorAt("PC has no bank outside of a section");
 		return 1;
 	}
-	return ctx.expr.pcSection->bank;
+	return ctx.expr.pcSection->assignedBank();
 }
 
 static int32_t getSizeofSect(RPNContext &ctx, uint8_t const *&rpnBuffer, int32_t &size) {
@@ -188,7 +188,7 @@ static int32_t getStartofSect(RPNContext &ctx, uint8_t const *&rpnBuffer, int32_
 		return 1;
 	}
 	assume(sect->offset == 0);
-	return sect->org;
+	return sect->assignedAddress();
 }
 
 static int32_t getSizeofSectType(RPNContext &ctx, uint8_t const *&rpnBuffer, int32_t &size) {
@@ -246,7 +246,7 @@ static int32_t getSymbolValue(RPNContext &ctx, uint8_t const *&rpnBuffer, int32_
 
 	if (symID == UINT32_MAX) { // PC
 		if (ctx.expr.pcSection) {
-			return ctx.expr.pcOffset + ctx.expr.pcSection->org;
+			return ctx.expr.pcOffset + ctx.expr.pcSection->assignedAddress();
 		}
 		ctx.rpnErrorAt("PC has no value outside of a section");
 		return 0;
@@ -269,7 +269,7 @@ static int32_t getSymbolValue(RPNContext &ctx, uint8_t const *&rpnBuffer, int32_
 			);
 			return 0;
 		}
-		return label.section->org + label.offset;
+		return label.section->assignedAddress() + label.offset;
 	}
 	return std::get<int32_t>(symbol->data);
 }
@@ -636,7 +636,8 @@ static void applyFilePatches(Section &section, Section &dataSection) {
 				checkPatchSize(patch.rpn, value, 16, ctx.isError);
 				// Offset is relative to the byte *after* the operand
 				// PC as operand to `jr` is lower than reference PC by 2
-				uint16_t address = patch.rpn.pcSection->org + patch.rpn.pcOffset + 2;
+				uint16_t address =
+				    patch.rpn.pcSection->assignedAddress() + patch.rpn.pcOffset + 2;
 				// The 16-bit truncation of `value - address` is intentional, since
 				// a low ROM0 address may `jr` backwards to a high HRAM one.
 				int16_t jumpOffset = static_cast<int16_t>(value - address);

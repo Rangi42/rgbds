@@ -28,38 +28,38 @@ void sect_ForEach(std::function<void(Section &)> const &callback) {
 static void checkPieceCompat(Section &target, Section const &other, size_t delta) {
 	assume(other.modifier != SECTION_UNION || delta == 0);
 
-	if (other.isAddressFixed) {
-		uint16_t org = other.org - delta;
+	if (other.org) {
+		uint16_t org = *other.org - delta;
 		char const *wasAdjusted = delta ? " after adjustment" : "";
 
-		if (target.isAddressFixed) {
-			if (target.org != org) {
+		if (target.org) {
+			if (*target.org != org) {
 				fatalTwoAt(
 				    target,
 				    other,
 				    "Section \"%s\" is defined with address $%04" PRIx16
 				    ", but also with address $%04" PRIx16 "%s",
 				    target.name.c_str(),
-				    target.org,
+				    *target.org,
 				    org,
 				    wasAdjusted
 				);
 			}
-		} else if (target.isAlignFixed) {
-			if ((org - target.alignOfs) & target.alignMask) {
+		} else if (target.align) {
+			if ((org - target.align->offset) & target.align->mask) {
 				fatalTwoAt(
 				    target,
 				    other,
 				    "Section \"%s\" is defined with %d-byte alignment (offset %" PRIu16
 				    "), but also with address $%04" PRIx16 "%s",
 				    target.name.c_str(),
-				    target.alignMask + 1,
-				    target.alignOfs,
+				    target.align->mask + 1,
+				    target.align->offset,
 				    org,
 				    wasAdjusted
 				);
 			}
-		} else if (other.org < delta) {
+		} else if (*other.org < delta) {
 			// Check that `org` did not underflow. Note that it's safe for the above checks to
 			// use an underflowed value, since their reported errors will still be accurate.
 			fatalTwoAt(
@@ -67,50 +67,51 @@ static void checkPieceCompat(Section &target, Section const &other, size_t delta
 			    other,
 			    "The fixed address $%04" PRIx16
 			    " of \"%s\" is lower than its current size of %" PRIu16 " bytes",
-			    other.org,
+			    *other.org,
 			    target.name.c_str(),
 			    target.size
 			);
 		}
 
-		target.isAddressFixed = true;
 		target.org = org;
-	} else if (other.isAlignFixed) {
-		uint32_t ofs = (other.alignOfs - delta) & other.alignMask;
+	} else if (other.align) {
+		uint32_t ofs = (other.align->offset - delta) & other.align->mask;
 		char const *wasAdjusted = delta ? " after adjustment" : "";
 
-		if (target.isAddressFixed) {
-			if ((target.org - ofs) & other.alignMask) {
+		if (target.org) {
+			if ((*target.org - ofs) & other.align->mask) {
 				fatalTwoAt(
 				    target,
 				    other,
 				    "Section \"%s\" is defined with address $%04" PRIx16
 				    ", but also with %d-byte alignment (offset %" PRIu16 "%s)",
 				    target.name.c_str(),
-				    target.org,
-				    other.alignMask + 1,
+				    *target.org,
+				    other.align->mask + 1,
 				    ofs,
 				    wasAdjusted
 				);
 			}
-		} else if (target.isAlignFixed
-		           && (other.alignMask & target.alignOfs) != (target.alignMask & ofs)) {
+		} else if (target.align
+		           && (other.align->mask & target.align->offset)
+		                  != (target.align->mask & ofs)) {
 			fatalTwoAt(
 			    target,
 			    other,
 			    "Section \"%s\" is defined with %d-byte alignment (offset %" PRIu16
 			    "), but also with %d-byte alignment (offset %" PRIu16 "%s)",
 			    target.name.c_str(),
-			    target.alignMask + 1,
-			    target.alignOfs,
-			    other.alignMask + 1,
+			    target.align->mask + 1,
+			    target.align->offset,
+			    other.align->mask + 1,
 			    ofs,
 			    wasAdjusted
 			);
-		} else if (!target.isAlignFixed || other.alignMask > target.alignMask) {
-			target.isAlignFixed = true;
-			target.alignMask = other.alignMask;
-			target.alignOfs = ofs;
+		} else if (!target.align || other.align->mask > target.align->mask) {
+			target.align = SectionAlignment{
+			    .mask = other.align->mask,
+			    .offset = static_cast<uint16_t>(ofs),
+			};
 		}
 	}
 }
@@ -138,18 +139,17 @@ static void mergeSections(Section &target, std::unique_ptr<Section> &&other) {
 		);
 	}
 
-	if (other->isBankFixed) {
-		if (!target.isBankFixed) {
-			target.isBankFixed = true;
-			target.bank = other->bank;
-		} else if (target.bank != other->bank) {
+	if (other->bank) {
+		if (!target.bank) {
+			target.bank = *other->bank;
+		} else if (*target.bank != *other->bank) {
 			fatalTwoAt(
 			    target,
 			    *other,
 			    "Section \"%s\" is defined with bank %" PRIu32 ", but also with bank %" PRIu32,
 			    target.name.c_str(),
-			    target.bank,
-			    other->bank
+			    *target.bank,
+			    *other->bank
 			);
 		}
 	}
@@ -233,7 +233,7 @@ static void doSanityChecks(Section &section) {
 
 	bool bankModeError = false;
 	if (options.is32kMode && section.type == SECTTYPE_ROMX) {
-		if (section.isBankFixed && section.bank != 1) {
+		if (section.bank && *section.bank != 1) {
 			error(
 			    "Section \"%s\" has type `ROMX`, which must be in bank 1 (if any) with option '-t'",
 			    section.name.c_str()
@@ -241,11 +241,11 @@ static void doSanityChecks(Section &section) {
 			bankModeError = true;
 		} else {
 			section.type = SECTTYPE_ROM0;
-			section.isBankFixed = false;
+			section.bank.reset();
 		}
 	}
 	if (options.isWRAM0Mode && section.type == SECTTYPE_WRAMX) {
-		if (section.isBankFixed && section.bank != 1) {
+		if (section.bank && *section.bank != 1) {
 			error(
 			    "Section \"%s\" has type `WRAMX`, which must be in bank 1 with options '-w' or "
 			    "'-d'",
@@ -254,11 +254,10 @@ static void doSanityChecks(Section &section) {
 			bankModeError = true;
 		} else {
 			section.type = SECTTYPE_WRAM0;
-			section.isBankFixed = false;
+			section.bank.reset();
 		}
 	}
-	if (options.isDmgMode && section.type == SECTTYPE_VRAM && section.isBankFixed
-	    && section.bank != 0) {
+	if (options.isDmgMode && section.type == SECTTYPE_VRAM && section.bank && *section.bank != 0) {
 		error(
 		    "Section \"%s\" has type `VRAM`, which must be in bank 0 with option '-d'",
 		    section.name.c_str()
@@ -268,34 +267,34 @@ static void doSanityChecks(Section &section) {
 
 	// Check if alignment is reasonable, this is important to avoid UB
 	// An alignment of zero is equivalent to no alignment, basically
-	if (section.isAlignFixed && section.alignMask == 0) {
-		section.isAlignFixed = false;
+	if (section.align && section.align->mask == 0) {
+		section.align.reset();
 	}
 
 	// The section's type is determined now, so we can get its type info
 	SectionTypeInfo const &typeInfo = section.typeInfo();
 
 	// Too large an alignment may not be satisfiable
-	if (section.isAlignFixed && (section.alignMask & typeInfo.startAddr) > section.alignOfs) {
+	if (section.align && (section.align->mask & typeInfo.startAddr) > section.align->offset) {
 		error(
 		    "Section \"%s\" has type `%s`, which cannot be aligned to $%04x bytes",
 		    section.name.c_str(),
 		    typeInfo.name,
-		    section.alignMask + 1
+		    section.align->mask + 1
 		);
 	}
 
 	uint32_t minbank = typeInfo.firstBank, maxbank = typeInfo.lastBank;
 
-	if (!bankModeError && section.isBankFixed
-	    && (section.bank < minbank || section.bank > maxbank)) {
+	if (!bankModeError && section.bank
+	    && (*section.bank < minbank || *section.bank > maxbank)) {
 		error(
 		    minbank == maxbank
 		        ? "Cannot place section \"%s\" in bank %" PRIu32 ", it must be %" PRIu32
 		        : "Cannot place section \"%s\" in bank %" PRIu32 ", it must be between %" PRIu32
 		          " and %" PRIu32,
 		    section.name.c_str(),
-		    section.bank,
+		    *section.bank,
 		    minbank,
 		    maxbank
 		);
@@ -315,36 +314,35 @@ static void doSanityChecks(Section &section) {
 
 	if (minbank == maxbank) {
 		section.bank = minbank;
-		section.isBankFixed = true;
 	}
 
-	if (section.isAddressFixed) {
+	if (section.org) {
 		// It doesn't make sense to have both org and alignment set
-		if (section.isAlignFixed) {
-			if ((section.org & section.alignMask) != section.alignOfs) {
+		if (section.align) {
+			if ((*section.org & section.align->mask) != section.align->offset) {
 				error(
 				    "Section \"%s\"'s fixed address does not match its alignment",
 				    section.name.c_str()
 				);
 			}
-			section.isAlignFixed = false;
+			section.align.reset();
 		}
 
 		// Ensure the target address is valid
-		if (section.org < typeInfo.startAddr || section.org > typeInfo.onePastEndAddr()) {
+		if (*section.org < typeInfo.startAddr || *section.org > typeInfo.onePastEndAddr()) {
 			error(
 			    "Section \"%s\"'s fixed address $%04" PRIx16 " is outside of range [$%04" PRIx16
 			    "; $%04" PRIx16 "]",
 			    section.name.c_str(),
-			    section.org,
+			    *section.org,
 			    typeInfo.startAddr,
 			    typeInfo.onePastEndAddr()
 			);
-		} else if (section.org + section.size > typeInfo.onePastEndAddr()) {
+		} else if (*section.org + section.size > typeInfo.onePastEndAddr()) {
 			error(
 			    "Section \"%s\"'s end address $%04x is greater than last address $%04x",
 			    section.name.c_str(),
-			    section.org + section.size,
+			    *section.org + section.size,
 			    typeInfo.onePastEndAddr()
 			);
 		}
@@ -353,12 +351,10 @@ static void doSanityChecks(Section &section) {
 	// An alignment of 16 is impossible to output from RGBASM, since it's treated as
 	// fixing the address, but is still satisfiable. A fixed address different from the
 	// alignment offset would not be, but we checked for that already above.
-	if (section.isAlignFixed && section.alignMask == (1 << 16) - 1) {
-		assume(!section.isAddressFixed || section.org == section.alignOfs);
-		section.isAddressFixed = true;
-		section.org = section.alignOfs;
-		section.isAlignFixed = false;
-		section.alignMask = section.alignOfs = 0;
+	if (section.align && section.align->mask == (1 << 16) - 1) {
+		assume(!section.org || *section.org == section.align->offset);
+		section.org = section.align->offset;
+		section.align.reset();
 	}
 }
 

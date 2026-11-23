@@ -257,32 +257,31 @@ void layout_PlaceSection(std::string const &name, bool isOptional) {
 	// Enforce a bank if one is active, but leave any existing constraint alone.
 	if (activeBankIdx != UINT32_MAX) {
 		uint32_t bank = activeBankIdx + typeInfo.firstBank;
-		if (section->isBankFixed && bank != section->bank) {
+		if (section->bank && bank != *section->bank) {
 			scriptError(
 			    "The linker script places section \"%s\" in %s bank %" PRIu32
 			    ", but it was already defined in bank %" PRIu32,
 			    name.c_str(),
 			    section->typeInfo().name,
 			    bank,
-			    section->bank
+			    *section->bank
 			);
 		}
-		section->isBankFixed = true;
 		section->bank = bank;
 	}
 
 	if (!isPcFloating) {
 		uint16_t &org = curAddr[activeType][activeBankIdx];
-		if (section->isAddressFixed && org != section->org) {
+		if (section->org && org != *section->org) {
 			scriptError(
 			    "The linker script assigns section \"%s\" to address $%04" PRIx16
 			    ", but it was already at $%04" PRIx16,
 			    name.c_str(),
 			    org,
-			    section->org
+			    *section->org
 			);
-		} else if (section->isAlignFixed && (org & section->alignMask) != section->alignOfs) {
-			int alignment = std::countr_one(section->alignMask);
+		} else if (section->align && (org & section->align->mask) != section->align->offset) {
+			int alignment = std::countr_one(section->align->mask);
 			scriptError(
 			    "The linker script assigns section \"%s\" to address $%04" PRIx16
 			    ", but that would be ALIGN[%d, %" PRIu16
@@ -290,14 +289,13 @@ void layout_PlaceSection(std::string const &name, bool isOptional) {
 			    name.c_str(),
 			    org,
 			    alignment,
-			    static_cast<uint16_t>(org & section->alignMask),
+			    static_cast<uint16_t>(org & section->align->mask),
 			    alignment,
-			    section->alignOfs
+			    section->align->offset
 			);
 		}
-		section->isAddressFixed = true;
-		section->isAlignFixed = false; // This can't be set when the above is.
 		section->org = org;
+		section->align.reset(); // This can't be set when the above is.
 
 		uint16_t curOfs = org - typeInfo.startAddr;
 		if (section->size > typeInfo.size - curOfs) {
@@ -317,8 +315,8 @@ void layout_PlaceSection(std::string const &name, bool isOptional) {
 			org += section->size;
 		}
 	} else {
-		if (section->isAddressFixed) {
-			if ((section->org & floatingAlignMask) != floatingAlignOffset) {
+		if (section->org) {
+			if ((*section->org & floatingAlignMask) != floatingAlignOffset) {
 				int alignment = std::countr_one(floatingAlignMask);
 				scriptError(
 				    "The linker script aligns floating section \"%s\" to ALIGN[%d, %" PRIu16
@@ -327,27 +325,34 @@ void layout_PlaceSection(std::string const &name, bool isOptional) {
 				    name.c_str(),
 				    alignment,
 				    floatingAlignOffset,
-				    section->org,
+				    *section->org,
 				    alignment,
-				    static_cast<uint16_t>(section->org & floatingAlignMask)
+				    static_cast<uint16_t>(*section->org & floatingAlignMask)
 				);
 			}
-		} else if (uint16_t commonMask = section->alignMask & floatingAlignMask;
-		           section->isAlignFixed
-		           && (section->alignOfs & commonMask) != (floatingAlignOffset & commonMask)) {
-			scriptError(
-			    "The linker script aligns floating section \"%s\" to ALIGN[%d, %" PRIu16
-			    "], but it already has requested ALIGN[%d, %" PRIu16 "]",
-			    name.c_str(),
-			    std::countr_one(floatingAlignMask),
-			    floatingAlignOffset,
-			    std::countr_one(section->alignMask),
-			    section->alignOfs
-			);
-		} else if (!section->isAlignFixed || floatingAlignMask > section->alignMask) {
-			section->isAlignFixed = floatingAlignMask != 0;
-			section->alignMask = floatingAlignMask;
-			section->alignOfs = floatingAlignOffset;
+		} else if (section->align) {
+			uint16_t commonMask = section->align->mask & floatingAlignMask;
+			if ((section->align->offset & commonMask) != (floatingAlignOffset & commonMask)) {
+				scriptError(
+				    "The linker script aligns floating section \"%s\" to ALIGN[%d, %" PRIu16
+				    "], but it already has requested ALIGN[%d, %" PRIu16 "]",
+				    name.c_str(),
+				    std::countr_one(floatingAlignMask),
+				    floatingAlignOffset,
+				    std::countr_one(section->align->mask),
+				    section->align->offset
+				);
+			} else if (floatingAlignMask > section->align->mask) {
+				section->align = SectionAlignment{
+				    .mask = floatingAlignMask,
+				    .offset = floatingAlignOffset,
+				};
+			}
+		} else if (floatingAlignMask != 0) {
+			section->align = SectionAlignment{
+			    .mask = floatingAlignMask,
+			    .offset = floatingAlignOffset,
+			};
 		}
 
 		floatingAlignOffset = (floatingAlignOffset + section->size) & floatingAlignMask;

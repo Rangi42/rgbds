@@ -5,6 +5,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <stdint.h>
 #include <string>
 #include <vector>
@@ -42,6 +43,11 @@ struct Patch {
 	}
 };
 
+struct SectionAlignment {
+	uint16_t mask;
+	uint16_t offset;
+};
+
 struct Section {
 	// Info contained in the object files
 	std::string name;
@@ -49,15 +55,12 @@ struct Section {
 	uint16_t offset;
 	SectionType type;
 	SectionModifier modifier;
-	bool isAddressFixed;
-	// This `struct`'s address in ROM.
-	// Importantly for fragments, this does not include `offset`!
-	uint16_t org;
-	bool isBankFixed;
-	uint32_t bank;
-	bool isAlignFixed;
-	uint16_t alignMask;
-	uint16_t alignOfs;
+	// Constraints from the object file or linker script; engagement means "fixed".
+	// Once linked, `org` and `bank` hold this `struct`'s assigned location.
+	// Importantly for fragments, `org` does not include `offset`!
+	std::optional<uint16_t> org;
+	std::optional<uint32_t> bank;
+	std::optional<SectionAlignment> align;
 	FileStackNode const *src;
 	int32_t lineNo;
 	std::vector<uint8_t> data; // Array of size `size`, or 0 if `type` does not have data
@@ -68,6 +71,15 @@ struct Section {
 	std::unique_ptr<Section> nextPiece; // The next fragment or union "piece" of this section
 
 	SectionTypeInfo const &typeInfo() const { return sectionTypeInfo[type]; }
+
+	uint16_t assignedAddress() const {
+		assume(org.has_value());
+		return *org;
+	}
+	uint32_t assignedBank() const {
+		assume(bank.has_value());
+		return *bank;
+	}
 
 private:
 	// Template class for both const and non-const iterators over the "pieces" of this section

@@ -266,21 +266,25 @@ static void readSection(
 		section.modifier = SECTION_NORMAL;
 	}
 	tryReadLong(tmp, file, "%s: Cannot read \"%s\"'s org: %s", fileName, section.name.c_str());
-	section.isAddressFixed = tmp >= 0;
-	if (tmp > UINT16_MAX) {
-		error("\"%s\"'s org is too large ($%" PRIx32 ")", section.name.c_str(), tmp);
-		tmp = UINT16_MAX;
+	if (tmp < 0) {
+		section.org.reset();
+	} else {
+		if (tmp > UINT16_MAX) {
+			error("\"%s\"'s org is too large ($%" PRIx32 ")", section.name.c_str(), tmp);
+			tmp = UINT16_MAX;
+		}
+		section.org = static_cast<uint16_t>(tmp);
 	}
-	section.org = tmp;
 	tryReadLong(tmp, file, "%s: Cannot read \"%s\"'s bank: %s", fileName, section.name.c_str());
-	section.isBankFixed = tmp >= 0;
-	section.bank = tmp;
+	if (tmp < 0) {
+		section.bank.reset();
+	} else {
+		section.bank = static_cast<uint32_t>(tmp);
+	}
 	tryGetc(byte, file, "%s: Cannot read \"%s\"'s alignment: %s", fileName, section.name.c_str());
 	if (byte > 16) {
 		byte = 16;
 	}
-	section.isAlignFixed = byte != 0;
-	section.alignMask = (1 << byte) - 1;
 	tryReadLong(
 	    tmp, file, "%s: Cannot read \"%s\"'s alignment offset: %s", fileName, section.name.c_str()
 	);
@@ -288,7 +292,14 @@ static void readSection(
 		error("\"%s\"'s alignment offset is too large ($%" PRIx32 ")", section.name.c_str(), tmp);
 		tmp = UINT16_MAX;
 	}
-	section.alignOfs = tmp;
+	if (byte == 0) {
+		section.align.reset();
+	} else {
+		section.align = SectionAlignment{
+		    .mask = static_cast<uint16_t>((1 << byte) - 1),
+		    .offset = static_cast<uint16_t>(tmp),
+		};
+	}
 
 	if (!sectTypeHasData(section.type)) {
 		return;

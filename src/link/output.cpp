@@ -72,12 +72,12 @@ void out_AddSection(Section const &section) {
 	    1,          // SECTTYPE_OAM
 	};
 
-	uint32_t targetBank = section.bank - section.typeInfo().firstBank;
+	uint32_t targetBank = section.assignedBank() - section.typeInfo().firstBank;
 	if (targetBank >= maxNbBanks[section.type]) {
 		fatal(
 		    "Section \"%s\" has an invalid bank range (%" PRIu32 " > %" PRIu32 ")",
 		    section.name.c_str(),
-		    section.bank,
+		    section.assignedBank(),
 		    maxNbBanks[section.type] - 1
 		);
 	}
@@ -90,17 +90,18 @@ void out_AddSection(Section const &section) {
 	    section.size ? sections[section.type][targetBank].sections
 	                 : sections[section.type][targetBank].zeroLenSections;
 	auto pos = bankSections.begin();
-	while (pos != bankSections.end() && (*pos)->org < section.org) {
+	while (pos != bankSections.end() && (*pos)->assignedAddress() < section.assignedAddress()) {
 		++pos;
 	}
 	bankSections.insert(pos, &section);
 }
 
 Section const *out_OverlappingSection(Section const &section) {
-	uint32_t bank = section.bank - section.typeInfo().firstBank;
+	uint32_t bank = section.assignedBank() - section.typeInfo().firstBank;
 
 	for (Section const *ptr : sections[section.type][bank].sections) {
-		if (ptr->org < section.org + section.size && section.org < ptr->org + ptr->size) {
+		if (ptr->assignedAddress() < section.assignedAddress() + section.size
+		    && section.assignedAddress() < ptr->assignedAddress() + ptr->size) {
 			return ptr;
 		}
 	}
@@ -177,7 +178,7 @@ static void
 		for (Section const *section : *bankSections) {
 			assume(section->offset == 0);
 			// Output padding up to the next SECTION
-			while (offset + baseOffset < section->org) {
+			while (offset + baseOffset < section->assignedAddress()) {
 				putc(getNextFillByte(), outputFile);
 				++offset;
 			}
@@ -335,7 +336,8 @@ static void writeSymBank(SortedSections const &bankSections, SectionType type, u
 				continue;
 			}
 			assume(std::holds_alternative<Label>(sym->data));
-			uint16_t addr = static_cast<uint16_t>(std::get<Label>(sym->data).offset + sect.org);
+			uint16_t addr =
+			    static_cast<uint16_t>(std::get<Label>(sym->data).offset + sect.assignedAddress());
 			uint16_t parentAddr = addr;
 			if (auto pos = sym->name.find('.'); pos != std::string::npos) {
 				std::string parentName = sym->name.substr(0, pos);
@@ -343,7 +345,8 @@ static void writeSymBank(SortedSections const &bankSections, SectionType type, u
 				    parentSym && std::holds_alternative<Label>(parentSym->data)) {
 					Label const &parentLabel = std::get<Label>(parentSym->data);
 					Section const &parentSection = *parentLabel.section;
-					parentAddr = static_cast<uint16_t>(parentLabel.offset + parentSection.org);
+					parentAddr =
+					    static_cast<uint16_t>(parentLabel.offset + parentSection.assignedAddress());
 				}
 			}
 			symList.push_back({.sym = sym, .addr = addr, .parentAddr = parentAddr});
@@ -408,8 +411,9 @@ uint16_t forEachSection(SortedSections const &sectList, Procedure<Section const 
 		// Pick the lowest section by address out of the two
 		auto &pickedSection = section == sectList.sections.end()                 ? zeroLenSection
 		                      : zeroLenSection == sectList.zeroLenSections.end() ? section
-		                      : (*section)->org < (*zeroLenSection)->org         ? section
-		                                                                         : zeroLenSection;
+		                      : (*section)->assignedAddress() < (*zeroLenSection)->assignedAddress()
+		                          ? section
+		                          : zeroLenSection;
 		used += (*pickedSection)->size;
 		callback(**pickedSection);
 		++pickedSection;
@@ -436,7 +440,8 @@ static void writeMapSymbols(Section const &sect) {
 				announced = true;
 			}
 			assume(std::holds_alternative<Label>(sym->data));
-			uint16_t addr = static_cast<uint16_t>(std::get<Label>(sym->data).offset + sect.org);
+			uint16_t addr =
+			    static_cast<uint16_t>(std::get<Label>(sym->data).offset + sect.assignedAddress());
 			// Space matches "\tSECTION: $xxxx ..."
 			fprintf(mapFile, "\t         $%04" PRIx16 " = ", addr);
 			writeSymName(sym->name, mapFile);
@@ -457,14 +462,14 @@ static void writeMapBank(SortedSections const &sectList, SectionType type, uint3
 	uint16_t prevEndAddr = sectionTypeInfo[type].startAddr;
 	uint16_t used = forEachSection(sectList, [&](Section const &sect) {
 		assume(sect.offset == 0);
-		assume(sect.org + sect.size <= UINT16_MAX);
+		assume(sect.assignedAddress() + sect.size <= UINT16_MAX);
 
-		if (uint16_t endAddr = sect.org + sect.size; endAddr > prevEndAddr) {
-			writeEmptySpace(prevEndAddr, sect.org);
+		if (uint16_t endAddr = sect.assignedAddress() + sect.size; endAddr > prevEndAddr) {
+			writeEmptySpace(prevEndAddr, sect.assignedAddress());
 			prevEndAddr = endAddr;
 		}
 
-		fprintf(mapFile, "\tSECTION: $%04" PRIx16, sect.org);
+		fprintf(mapFile, "\tSECTION: $%04" PRIx16, sect.assignedAddress());
 		if (sect.size != 0) {
 			fprintf(mapFile, "-$%04x", prevEndAddr - 1);
 		}
