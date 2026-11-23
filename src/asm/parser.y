@@ -87,6 +87,33 @@
 
 	// CC_NZ == CC_Z ^ 1, and CC_NC == CC_C ^ 1, so `!` can toggle them
 	enum { CC_NZ, CC_Z, CC_NC, CC_C };
+
+	// Emit an opcode followed by a relocatable operand.
+	static void emitByteOp(uint8_t opcode, Expression const &operand) {
+		sect_ConstByte(opcode);
+		sect_RelByte(operand, 1);
+	}
+
+	static void emitWordOp(uint8_t opcode, Expression const &operand) {
+		sect_ConstByte(opcode);
+		sect_RelWord(operand, 1);
+	}
+
+	static void emitPCRelByteOp(uint8_t opcode, Expression const &operand) {
+		sect_ConstByte(opcode);
+		sect_PCRelByte(operand, 1);
+	}
+
+	// Emit a byte whose value is either a checked constant or a relocatable operand.
+	static void emitOperandByte(
+	    Expression const &operand, uint32_t pcShift, uint8_t opcode = 0, uint8_t shift = 0
+	) {
+		if (!operand.isKnown()) {
+			sect_RelByte(operand, pcShift);
+		} else {
+			sect_ConstByte(static_cast<uint8_t>(opcode | (operand.value() << shift)));
+		}
+	}
 }
 
 /******************** Tokens ********************/
@@ -1876,8 +1903,7 @@ dl:
 
 sm83_adc:
 	SM83_ADC op_a_n {
-		sect_ConstByte(0xCE);
-		sect_RelByte($2, 1);
+		emitByteOp(0xCE, $2);
 	}
 	| SM83_ADC op_a_r {
 		sect_ConstByte(0x88 | $2);
@@ -1886,8 +1912,7 @@ sm83_adc:
 
 sm83_add:
 	SM83_ADD op_a_n {
-		sect_ConstByte(0xC6);
-		sect_RelByte($2, 1);
+		emitByteOp(0xC6, $2);
 	}
 	| SM83_ADD op_a_r {
 		sect_ConstByte(0x80 | $2);
@@ -1896,15 +1921,13 @@ sm83_add:
 		sect_ConstByte(0x09 | ($4 << 4));
 	}
 	| SM83_ADD MODE_SP COMMA reloc_8bit_signed {
-		sect_ConstByte(0xE8);
-		sect_RelByte($4, 1);
+		emitByteOp(0xE8, $4);
 	}
 ;
 
 sm83_and:
 	SM83_AND op_a_n {
-		sect_ConstByte(0xE6);
-		sect_RelByte($2, 1);
+		emitByteOp(0xE6, $2);
 	}
 	| SM83_AND op_a_r {
 		sect_ConstByte(0xA0 | $2);
@@ -1916,22 +1939,16 @@ sm83_bit:
 		uint8_t mask = static_cast<uint8_t>(0x40 | $4);
 		$2.addCheckBitIndex(mask);
 		sect_ConstByte(0xCB);
-		if (!$2.isKnown()) {
-			sect_RelByte($2, 0);
-		} else {
-			sect_ConstByte(mask | ($2.value() << 3));
-		}
+		emitOperandByte($2, 0, mask, 3);
 	}
 ;
 
 sm83_call:
 	SM83_CALL reloc_16bit {
-		sect_ConstByte(0xCD);
-		sect_RelWord($2, 1);
+		emitWordOp(0xCD, $2);
 	}
 	| SM83_CALL ccode_expr COMMA reloc_16bit {
-		sect_ConstByte(0xC4 | ($2 << 3));
-		sect_RelWord($4, 1);
+		emitWordOp(0xC4 | ($2 << 3), $4);
 	}
 ;
 
@@ -1943,8 +1960,7 @@ sm83_ccf:
 
 sm83_cp:
 	SM83_CP op_a_n {
-		sect_ConstByte(0xFE);
-		sect_RelByte($2, 1);
+		emitByteOp(0xFE, $2);
 	}
 	| SM83_CP op_a_r {
 		sect_ConstByte(0xB8 | $2);
@@ -2004,12 +2020,10 @@ sm83_inc:
 
 sm83_jp:
 	SM83_JP reloc_16bit {
-		sect_ConstByte(0xC3);
-		sect_RelWord($2, 1);
+		emitWordOp(0xC3, $2);
 	}
 	| SM83_JP ccode_expr COMMA reloc_16bit {
-		sect_ConstByte(0xC2 | ($2 << 3));
-		sect_RelWord($4, 1);
+		emitWordOp(0xC2 | ($2 << 3), $4);
 	}
 	| SM83_JP MODE_HL {
 		sect_ConstByte(0xE9);
@@ -2018,12 +2032,10 @@ sm83_jp:
 
 sm83_jr:
 	SM83_JR reloc_16bit {
-		sect_ConstByte(0x18);
-		sect_PCRelByte($2, 1);
+		emitPCRelByteOp(0x18, $2);
 	}
 	| SM83_JR ccode_expr COMMA reloc_16bit {
-		sect_ConstByte(0x20 | ($2 << 3));
-		sect_PCRelByte($4, 1);
+		emitPCRelByteOp(0x20 | ($2 << 3), $4);
 	}
 ;
 
@@ -2049,20 +2061,12 @@ sm83_ldh:
 	SM83_LDH MODE_A COMMA op_mem_ind {
 		$4.addCheckHRAM();
 		sect_ConstByte(0xF0);
-		if (!$4.isKnown()) {
-			sect_RelByte($4, 1);
-		} else {
-			sect_ConstByte($4.value());
-		}
+		emitOperandByte($4, 1);
 	}
 	| SM83_LDH op_mem_ind COMMA MODE_A {
 		$2.addCheckHRAM();
 		sect_ConstByte(0xE0);
-		if (!$2.isKnown()) {
-			sect_RelByte($2, 1);
-		} else {
-			sect_ConstByte($2.value());
-		}
+		emitOperandByte($2, 1);
 	}
 	| SM83_LDH MODE_A COMMA c_ind {
 		sect_ConstByte(0xF2);
@@ -2102,12 +2106,10 @@ sm83_ld:
 
 sm83_ld_hl:
 	SM83_LD MODE_HL COMMA MODE_SP op_sp_offset {
-		sect_ConstByte(0xF8);
-		sect_RelByte($5, 1);
+		emitByteOp(0xF8, $5);
 	}
 	| SM83_LD MODE_HL COMMA reloc_16bit {
-		sect_ConstByte(0x01 | (REG_HL << 4));
-		sect_RelWord($4, 1);
+		emitWordOp(0x01 | (REG_HL << 4), $4);
 	}
 	| SM83_LD MODE_HL COMMA reg_tt_no_af {
 		::error(
@@ -2127,19 +2129,16 @@ sm83_ld_sp:
 		::error("\"LD SP, %s\" is not a valid instruction", reg_tt_names[$4]);
 	}
 	| SM83_LD MODE_SP COMMA reloc_16bit {
-		sect_ConstByte(0x01 | (REG_SP << 4));
-		sect_RelWord($4, 1);
+		emitWordOp(0x01 | (REG_SP << 4), $4);
 	}
 ;
 
 sm83_ld_mem:
 	SM83_LD op_mem_ind COMMA MODE_SP {
-		sect_ConstByte(0x08);
-		sect_RelWord($2, 1);
+		emitWordOp(0x08, $2);
 	}
 	| SM83_LD op_mem_ind COMMA MODE_A {
-		sect_ConstByte(0xEA);
-		sect_RelWord($2, 1);
+		emitWordOp(0xEA, $2);
 	}
 ;
 
@@ -2157,8 +2156,7 @@ sm83_ld_rr:
 
 sm83_ld_r_no_a:
 	SM83_LD reg_r_no_a COMMA reloc_8bit {
-		sect_ConstByte(0x06 | ($2 << 3));
-		sect_RelByte($4, 1);
+		emitByteOp(0x06 | ($2 << 3), $4);
 	}
 	| SM83_LD reg_r_no_a COMMA reg_r {
 		if ($2 == REG_HL_IND && $4 == REG_HL_IND) {
@@ -2171,8 +2169,7 @@ sm83_ld_r_no_a:
 
 sm83_ld_a:
 	SM83_LD reg_a COMMA reloc_8bit {
-		sect_ConstByte(0x06 | ($2 << 3));
-		sect_RelByte($4, 1);
+		emitByteOp(0x06 | ($2 << 3), $4);
 	}
 	| SM83_LD reg_a COMMA reg_r {
 		sect_ConstByte(0x40 | ($2 << 3) | $4);
@@ -2184,15 +2181,13 @@ sm83_ld_a:
 		sect_ConstByte(0x0A | ($4 << 4));
 	}
 	| SM83_LD reg_a COMMA op_mem_ind {
-		sect_ConstByte(0xFA);
-		sect_RelWord($4, 1);
+		emitWordOp(0xFA, $4);
 	}
 ;
 
 sm83_ld_ss:
 	SM83_LD reg_bc_or_de COMMA reloc_16bit {
-		sect_ConstByte(0x01 | ($2 << 4));
-		sect_RelWord($4, 1);
+		emitWordOp(0x01 | ($2 << 4), $4);
 	}
 	| SM83_LD reg_bc_or_de COMMA reg_tt_no_af {
 		::error(
@@ -2217,8 +2212,7 @@ sm83_nop:
 
 sm83_or:
 	SM83_OR op_a_n {
-		sect_ConstByte(0xF6);
-		sect_RelByte($2, 1);
+		emitByteOp(0xF6, $2);
 	}
 	| SM83_OR op_a_r {
 		sect_ConstByte(0xB0 | $2);
@@ -2242,11 +2236,7 @@ sm83_res:
 		uint8_t mask = static_cast<uint8_t>(0x80 | $4);
 		$2.addCheckBitIndex(mask);
 		sect_ConstByte(0xCB);
-		if (!$2.isKnown()) {
-			sect_RelByte($2, 0);
-		} else {
-			sect_ConstByte(mask | ($2.value() << 3));
-		}
+		emitOperandByte($2, 0, mask, 3);
 	}
 ;
 
@@ -2320,18 +2310,13 @@ sm83_rrca:
 sm83_rst:
 	SM83_RST reloc_8bit {
 		$2.addCheckRST();
-		if (!$2.isKnown()) {
-			sect_RelByte($2, 0);
-		} else {
-			sect_ConstByte(0xC7 | $2.value());
-		}
+		emitOperandByte($2, 0, 0xC7);
 	}
 ;
 
 sm83_sbc:
 	SM83_SBC op_a_n {
-		sect_ConstByte(0xDE);
-		sect_RelByte($2, 1);
+		emitByteOp(0xDE, $2);
 	}
 	| SM83_SBC op_a_r {
 		sect_ConstByte(0x98 | $2);
@@ -2349,11 +2334,7 @@ sm83_set:
 		uint8_t mask = static_cast<uint8_t>(0xC0 | $4);
 		$2.addCheckBitIndex(mask);
 		sect_ConstByte(0xCB);
-		if (!$2.isKnown()) {
-			sect_RelByte($2, 0);
-		} else {
-			sect_ConstByte(mask | ($2.value() << 3));
-		}
+		emitOperandByte($2, 0, mask, 3);
 	}
 ;
 
@@ -2384,15 +2365,13 @@ sm83_stop:
 		sect_ConstByte(0x00);
 	}
 	| SM83_STOP reloc_8bit {
-		sect_ConstByte(0x10);
-		sect_RelByte($2, 1);
+		emitByteOp(0x10, $2);
 	}
 ;
 
 sm83_sub:
 	SM83_SUB op_a_n {
-		sect_ConstByte(0xD6);
-		sect_RelByte($2, 1);
+		emitByteOp(0xD6, $2);
 	}
 	| SM83_SUB op_a_r {
 		sect_ConstByte(0x90 | $2);
@@ -2408,8 +2387,7 @@ sm83_swap:
 
 sm83_xor:
 	SM83_XOR op_a_n {
-		sect_ConstByte(0xEE);
-		sect_RelByte($2, 1);
+		emitByteOp(0xEE, $2);
 	}
 	| SM83_XOR op_a_r {
 		sect_ConstByte(0xA8 | $2);
