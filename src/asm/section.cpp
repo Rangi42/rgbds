@@ -49,22 +49,28 @@ struct SectionStackEntry {
 	std::stack<UnionStackEntry> unionStack;
 };
 
-static Section *currentSection = nullptr;
-static InsertionOrderedMap<std::string, Section> sections;
+struct SectionState {
+	Section *currentSection = nullptr;
+	InsertionOrderedMap<std::string, Section> sections;
 
-static uint32_t curOffset; // Offset into the current section (see `sect_GetSymbolOffset`)
+	uint32_t curOffset = 0; // Offset into the current section (see `sect_GetSymbolOffset`)
 
-static std::deque<SectionStackEntry> sectionStack;
+	std::deque<SectionStackEntry> sectionStack;
 
-static Section *currentLoadSection = nullptr;
-static std::pair<Symbol const *, Symbol const *> currentLoadLabelScopes = {nullptr, nullptr};
-static int32_t loadOffset; // Offset into the LOAD section's parent (see sect_GetOutputOffset)
+	Section *currentLoadSection = nullptr;
+	std::pair<Symbol const *, Symbol const *> currentLoadLabelScopes = {nullptr, nullptr};
+	int32_t loadOffset = 0; // Offset into the LOAD section's parent (see sect_GetOutputOffset)
 
-static std::stack<UnionStackEntry> currentUnionStack;
+	std::stack<UnionStackEntry> currentUnionStack;
+
+	std::vector<std::string> sectErrors;
+};
+
+static SectionState sectionState;
 
 [[nodiscard]]
 static bool requireSection() {
-	if (currentSection) {
+	if (sectionState.currentSection) {
 		return true;
 	}
 
@@ -78,29 +84,29 @@ static bool requireCodeSection() {
 		return false;
 	}
 
-	if (sectTypeHasData(currentSection->type)) {
+	if (sectTypeHasData(sectionState.currentSection->type)) {
 		return true;
 	}
 
 	error(
 	    "Section \"%s\" cannot contain code or data (not `ROM0` or `ROMX`)",
-	    currentSection->name.c_str()
+	    sectionState.currentSection->name.c_str()
 	);
 	return false;
 }
 
 size_t sect_CountSections() {
-	return sections.size();
+	return sectionState.sections.size();
 }
 
 void sect_ForEach(FunctionRef<void(Section &)> callback) {
-	for (Section &sect : sections) {
+	for (Section &sect : sectionState.sections) {
 		callback(sect);
 	}
 }
 
 void sect_CheckSizes() {
-	for (Section const &sect : sections) {
+	for (Section const &sect : sectionState.sections) {
 		if (uint32_t maxSize = sect.typeInfo().size; sect.size > maxSize) {
 			error(
 			    "Section \"%s\" grew too big (max size = 0x%" PRIX32 " bytes, reached 0x%" PRIX32
@@ -114,11 +120,9 @@ void sect_CheckSizes() {
 }
 
 Section *sect_FindSectionByName(std::string const &name) {
-	auto index = sections.findIndex(name);
-	return index ? &sections[*index] : nullptr;
+	auto index = sectionState.sections.findIndex(name);
+	return index ? &sectionState.sections[*index] : nullptr;
 }
-
-static std::vector<std::string> sectErrors;
 
 // Ideally we'd use a variadic template function and `std::forward` the variadic arguments to
 // `snprintf`; but passing `fmt` to `snprintf` triggers a `-Wformat-security` warning which we
@@ -142,7 +146,7 @@ static void sectError(char const *fmt, ...) {
 		vsnprintf(result.data(), len + 1, fmt, args2);
 	}
 	va_end(args2);
-	sectErrors.push_back(result);
+	sectionState.sectErrors.push_back(result);
 }
 
 static void mergeSectUnion(Section &sect, uint32_t org, uint8_t alignment, uint16_t alignOffset) {
@@ -281,7 +285,7 @@ static void mergeSections(
     uint16_t alignOffset,
     SectionModifier mod
 ) {
-	sectErrors.clear();
+	sectionState.sectErrors.clear();
 
 	if (sect.modifier != mod) {
 		sectError(
@@ -296,7 +300,7 @@ static void mergeSections(
 			// and they cannot encounter this error, so it's okay for this one to skip the queue.
 			// Queueing it in `sectErrors` would require a sentinel value anyway (e.g. an empty
 			// string) to handle the "no trace" callback.
-			assume(sectErrors.empty());
+			assume(sectionState.sectErrors.empty());
 			fatalNoTrace([&sect]() {
 				fprintf(stderr, "Section \"%s\" already defined\n", sect.name.c_str());
 				fstk_TraceCurrent();
@@ -335,12 +339,12 @@ static void mergeSections(
 		}
 	}
 
-	if (size_t nbSectErrors = sectErrors.size(); nbSectErrors == 1) {
+	if (size_t nbSectErrors = sectionState.sectErrors.size(); nbSectErrors == 1) {
 		// If there was only one error, print it as a fatal error
-		fatal("%s", sectErrors.front().c_str());
+		fatal("%s", sectionState.sectErrors.front().c_str());
 	} else if (nbSectErrors > 1) {
 		// If there were multiple errors, print each of them, followed by a fatal summary error
-		for (std::string const &message : sectErrors) {
+		for (std::string const &message : sectionState.sectErrors) {
 			error("%s", message.c_str());
 		}
 		fatal(
@@ -362,7 +366,7 @@ static Section *createSection(
     SectionModifier mod
 ) {
 	// Add the new section to the list
-	Section &sect = sections.add(name);
+	Section &sect = sectionState.sections.add(name);
 
 	sect.name = name;
 	sect.type = type;
@@ -386,8 +390,8 @@ static Section *createSection(
 }
 
 static Section *createSectionFragmentLiteral(Section const &parent) {
-	assume(sections.contains(parent.name));
-	Section &sect = sections.addAnonymous();
+	assume(sectionState.sections.contains(parent.name));
+	Section &sect = sectionState.sections.addAnonymous();
 
 	sect.name = parent.name;
 	sect.type = parent.type;
@@ -504,7 +508,7 @@ static Section *getSection(
 }
 
 static void changeSection() {
-	if (!currentUnionStack.empty()) {
+	if (!sectionState.currentUnionStack.empty()) {
 		fatal("Cannot change the section within a `UNION`");
 	}
 
@@ -513,10 +517,11 @@ static void changeSection() {
 
 uint32_t Section::getID() const {
 	// Section fragments share the same name but have different IDs, so search by identity
-	if (auto search =
-	        std::find_if(RANGE(sections), [this](Section const &s) { return &s == this; });
-	    search != sections.end()) {
-		return static_cast<uint32_t>(std::distance(sections.begin(), search));
+	if (auto search = std::find_if(
+	        RANGE(sectionState.sections), [this](Section const &s) { return &s == this; }
+	    );
+	    search != sectionState.sections.end()) {
+		return static_cast<uint32_t>(std::distance(sectionState.sections.begin(), search));
 	}
 	return UINT32_MAX; // LCOV_EXCL_LINE
 }
@@ -528,12 +533,12 @@ bool Section::isSizeKnown() const {
 	}
 
 	// The current section (or current load section if within one) is still growing
-	if (this == currentSection || this == currentLoadSection) {
+	if (this == sectionState.currentSection || this == sectionState.currentLoadSection) {
 		return false;
 	}
 
 	// Any section on the stack is still growing
-	for (SectionStackEntry &entry : sectionStack) {
+	for (SectionStackEntry &entry : sectionState.sectionStack) {
 		if (entry.section && entry.section->name == name) {
 			return false;
 		}
@@ -553,7 +558,7 @@ void sect_NewSection(
 		fatal("Section names cannot contain '\\0' characters");
 	}
 
-	for (SectionStackEntry &entry : sectionStack) {
+	for (SectionStackEntry &entry : sectionState.sectionStack) {
 		if (entry.section && entry.section->name == name) {
 			fatal("Section \"%s\" is already on the stack", name.c_str());
 		}
@@ -564,16 +569,16 @@ void sect_NewSection(
 		return;
 	}
 
-	if (currentLoadSection) {
+	if (sectionState.currentLoadSection) {
 		sect_EndLoadSection("SECTION");
 	}
 
 	Section *sect = getSection(name, type, org, attrs, mod);
 
 	changeSection();
-	curOffset = mod == SECTION_UNION ? 0 : sect->size;
-	loadOffset = 0; // This is still used when checking for section size overflow!
-	currentSection = sect;
+	sectionState.curOffset = mod == SECTION_UNION ? 0 : sect->size;
+	sectionState.loadOffset = 0; // This is still used when checking for section size overflow!
+	sectionState.currentSection = sect;
 }
 
 void sect_SetLoadSection(
@@ -597,17 +602,17 @@ void sect_SetLoadSection(
 		return;
 	}
 
-	if (currentLoadSection) {
+	if (sectionState.currentLoadSection) {
 		sect_EndLoadSection("LOAD");
 	}
 
 	Section *sect = getSection(name, type, org, attrs, mod);
 
-	currentLoadLabelScopes = sym_GetCurrentLabelScopes();
+	sectionState.currentLoadLabelScopes = sym_GetCurrentLabelScopes();
 	changeSection();
-	loadOffset = curOffset - (mod == SECTION_UNION ? 0 : sect->size);
-	curOffset -= loadOffset;
-	currentLoadSection = sect;
+	sectionState.loadOffset = sectionState.curOffset - (mod == SECTION_UNION ? 0 : sect->size);
+	sectionState.curOffset -= sectionState.loadOffset;
+	sectionState.currentLoadSection = sect;
 }
 
 void sect_EndLoadSection(char const *cause) {
@@ -615,38 +620,40 @@ void sect_EndLoadSection(char const *cause) {
 		warning(WARNING_UNTERMINATED_LOAD, "`LOAD` block without `ENDL` terminated by `%s`", cause);
 	}
 
-	if (!currentLoadSection) {
+	if (!sectionState.currentLoadSection) {
 		error("Found `ENDL` outside of a `LOAD` block");
 		return;
 	}
 
 	changeSection();
-	curOffset += loadOffset;
-	loadOffset = 0;
-	currentLoadSection = nullptr;
-	sym_SetCurrentLabelScopes(currentLoadLabelScopes);
+	sectionState.curOffset += sectionState.loadOffset;
+	sectionState.loadOffset = 0;
+	sectionState.currentLoadSection = nullptr;
+	sym_SetCurrentLabelScopes(sectionState.currentLoadLabelScopes);
 }
 
 void sect_CheckLoadClosed() {
-	if (currentLoadSection) {
+	if (sectionState.currentLoadSection) {
 		warning(WARNING_UNTERMINATED_LOAD, "`LOAD` block without `ENDL` terminated by EOF");
 	}
 }
 
 Section *sect_GetSymbolSection() {
-	return currentLoadSection ? currentLoadSection : currentSection;
+	return sectionState.currentLoadSection ? sectionState.currentLoadSection
+	                                       : sectionState.currentSection;
 }
 
 uint32_t sect_GetSymbolOffset() {
-	return curOffset;
+	return sectionState.curOffset;
 }
 
 uint32_t sect_GetOutputOffset() {
-	return curOffset + loadOffset;
+	return sectionState.curOffset + sectionState.loadOffset;
 }
 
 Patch *sect_AddOutputPatch() {
-	return currentSection ? &currentSection->patches.emplace_back() : nullptr;
+	return sectionState.currentSection ? &sectionState.currentSection->patches.emplace_back()
+	                                   : nullptr;
 }
 
 // Returns how many bytes need outputting for the specified alignment and offset to succeed
@@ -668,7 +675,7 @@ uint32_t sect_GetAlignBytes(uint8_t alignment, uint16_t offset) {
 	// We need `(pcValue + curOffset + return value) & minAlignMask == offset`
 	uint16_t pcValue = isFixed ? sect->org : sect->alignOfs;
 	uint32_t minAlignMask = (1u << std::min(alignment, curAlignment)) - 1;
-	return static_cast<uint16_t>(offset - curOffset - pcValue) & minAlignMask;
+	return static_cast<uint16_t>(offset - sectionState.curOffset - pcValue) & minAlignMask;
 }
 
 void sect_AlignPC(uint8_t alignment, uint16_t offset) {
@@ -686,23 +693,24 @@ void sect_AlignPC(uint8_t alignment, uint16_t offset) {
 	uint32_t sectAlignMask = sectAlignSize - 1;
 
 	if (sect->org != UINT32_MAX) {
-		if (uint32_t actualOffset = (sect->org + curOffset) & alignMask; actualOffset != offset) {
+		if (uint32_t actualOffset = (sect->org + sectionState.curOffset) & alignMask;
+		    actualOffset != offset) {
 			error(
 			    "Section is misaligned (at PC = $%04" PRIx32 ", expected ALIGN[%" PRIu32
 			    ", %" PRIu32 "], got ALIGN[%" PRIu32 ", %" PRIu32 "])",
-			    sect->org + curOffset,
+			    sect->org + sectionState.curOffset,
 			    alignment,
 			    offset,
 			    alignment,
 			    actualOffset
 			);
 		}
-	} else if (uint32_t actualOffset = (sect->alignOfs + curOffset) & alignMask;
+	} else if (uint32_t actualOffset = (sect->alignOfs + sectionState.curOffset) & alignMask;
 	           sect->align != 0 && (actualOffset & sectAlignMask) != (offset & sectAlignMask)) {
 		error(
 		    "Section is misaligned ($%04" PRIx32 " bytes into the section, expected ALIGN[%" PRIu32
 		    ", %" PRIu32 "], got ALIGN[%" PRIu32 ", %" PRIu32 "])",
-		    curOffset,
+		    sectionState.curOffset,
 		    alignment,
 		    offset,
 		    alignment,
@@ -711,40 +719,41 @@ void sect_AlignPC(uint8_t alignment, uint16_t offset) {
 	} else if (alignment == 16) {
 		// Treat an alignment large enough as fixing the address.
 		// Note that this also ensures that a section's alignment never becomes 16 or greater.
-		if (offset < curOffset) {
+		if (offset < sectionState.curOffset) {
 			error(
 			    "Section already contains %" PRIu32
 			    " bytes, higher than this aligned address $%04" PRIx32,
-			    curOffset,
+			    sectionState.curOffset,
 			    offset
 			);
 		} else {
 			sect->align = 0; // Reset the alignment, since we're fixing the address.
-			sect->org = offset - curOffset;
+			sect->org = offset - sectionState.curOffset;
 		}
 	} else if (alignment > sect->align) {
 		sect->align = alignment;
 		// We need `(sect->alignOfs + curOffset) & alignMask == offset`
-		sect->alignOfs = (offset - curOffset) & alignMask;
+		sect->alignOfs = (offset - sectionState.curOffset) & alignMask;
 	}
 }
 
 static void growSection(uint32_t growth) {
-	if (growth > 0 && curOffset > UINT32_MAX - growth) {
+	if (growth > 0 && sectionState.curOffset > UINT32_MAX - growth) {
 		fatal("Section size would overflow internal counter");
 	}
-	curOffset += growth;
-	if (uint32_t outOffset = sect_GetOutputOffset(); outOffset > currentSection->size) {
-		currentSection->size = outOffset;
+	sectionState.curOffset += growth;
+	if (uint32_t outOffset = sect_GetOutputOffset(); outOffset > sectionState.currentSection->size) {
+		sectionState.currentSection->size = outOffset;
 	}
-	if (currentLoadSection && curOffset > currentLoadSection->size) {
-		currentLoadSection->size = curOffset;
+	if (sectionState.currentLoadSection
+	    && sectionState.curOffset > sectionState.currentLoadSection->size) {
+		sectionState.currentLoadSection->size = sectionState.curOffset;
 	}
 }
 
 static void writeByte(uint8_t byte) {
-	if (uint32_t index = sect_GetOutputOffset(); index < currentSection->data.size()) {
-		currentSection->data[index] = byte;
+	if (uint32_t index = sect_GetOutputOffset(); index < sectionState.currentSection->data.size()) {
+		sectionState.currentSection->data[index] = byte;
 	}
 	growSection(1);
 }
@@ -771,30 +780,30 @@ void sect_StartUnion() {
 	// Therefore, any interactions are NOT TESTED, so lift either of those restrictions at
 	// your own peril! ^^
 
-	if (!currentSection) {
+	if (!sectionState.currentSection) {
 		error("`UNION`s must be inside a `SECTION`");
 		return;
 	}
-	if (sectTypeHasData(currentSection->type)) {
+	if (sectTypeHasData(sectionState.currentSection->type)) {
 		error("Cannot use `UNION` inside of `ROM0` or `ROMX` sections");
 		return;
 	}
 
-	currentUnionStack.push({.start = curOffset, .size = 0});
+	sectionState.currentUnionStack.push({.start = sectionState.curOffset, .size = 0});
 }
 
 static void endUnionMember() {
-	UnionStackEntry &member = currentUnionStack.top();
-	uint32_t memberSize = curOffset - member.start;
+	UnionStackEntry &member = sectionState.currentUnionStack.top();
+	uint32_t memberSize = sectionState.curOffset - member.start;
 
 	if (memberSize > member.size) {
 		member.size = memberSize;
 	}
-	curOffset = member.start;
+	sectionState.curOffset = member.start;
 }
 
 void sect_NextUnionMember() {
-	if (currentUnionStack.empty()) {
+	if (sectionState.currentUnionStack.empty()) {
 		error("Found `NEXTU` outside of a `UNION` construct");
 		return;
 	}
@@ -802,17 +811,17 @@ void sect_NextUnionMember() {
 }
 
 void sect_EndUnion() {
-	if (currentUnionStack.empty()) {
+	if (sectionState.currentUnionStack.empty()) {
 		error("Found `ENDU` outside of a `UNION` construct");
 		return;
 	}
 	endUnionMember();
-	curOffset += currentUnionStack.top().size;
-	currentUnionStack.pop();
+	sectionState.curOffset += sectionState.currentUnionStack.top().size;
+	sectionState.currentUnionStack.pop();
 }
 
 void sect_CheckUnionClosed() {
-	if (!currentUnionStack.empty()) {
+	if (!sectionState.currentUnionStack.empty()) {
 		error("Unterminated `UNION` construct");
 	}
 }
@@ -872,7 +881,7 @@ void sect_Skip(uint32_t skip, bool ds) {
 		return;
 	}
 
-	if (!sectTypeHasData(currentSection->type)) {
+	if (!sectTypeHasData(sectionState.currentSection->type)) {
 		growSection(skip);
 	} else {
 		if (!ds) {
@@ -1066,64 +1075,64 @@ bool sect_BinaryFile(std::string const &name, uint32_t startPos, std::optional<u
 }
 
 void sect_PushSection() {
-	sectionStack.push_front({
-	    .section = currentSection,
-	    .loadSection = currentLoadSection,
+	sectionState.sectionStack.push_front({
+	    .section = sectionState.currentSection,
+	    .loadSection = sectionState.currentLoadSection,
 	    .labelScopes = sym_GetCurrentLabelScopes(),
-	    .offset = curOffset,
-	    .loadOffset = loadOffset,
+	    .offset = sectionState.curOffset,
+	    .loadOffset = sectionState.loadOffset,
 	    .unionStack = {},
 	});
 
 	// Reset the section scope
-	currentSection = nullptr;
-	currentLoadSection = nullptr;
+	sectionState.currentSection = nullptr;
+	sectionState.currentLoadSection = nullptr;
 	sym_ResetCurrentLabelScopes();
-	std::swap(currentUnionStack, sectionStack.front().unionStack);
+	std::swap(sectionState.currentUnionStack, sectionState.sectionStack.front().unionStack);
 }
 
 void sect_PopSection() {
-	if (sectionStack.empty()) {
+	if (sectionState.sectionStack.empty()) {
 		fatal("No entries in the section stack");
 	}
 
-	if (currentLoadSection) {
+	if (sectionState.currentLoadSection) {
 		sect_EndLoadSection("POPS");
 	}
 
-	SectionStackEntry entry = sectionStack.front();
-	sectionStack.pop_front();
+	SectionStackEntry entry = sectionState.sectionStack.front();
+	sectionState.sectionStack.pop_front();
 
 	changeSection();
-	currentSection = entry.section;
-	currentLoadSection = entry.loadSection;
+	sectionState.currentSection = entry.section;
+	sectionState.currentLoadSection = entry.loadSection;
 	sym_SetCurrentLabelScopes(entry.labelScopes);
-	curOffset = entry.offset;
-	loadOffset = entry.loadOffset;
-	std::swap(currentUnionStack, entry.unionStack);
+	sectionState.curOffset = entry.offset;
+	sectionState.loadOffset = entry.loadOffset;
+	std::swap(sectionState.currentUnionStack, entry.unionStack);
 }
 
 void sect_CheckStack() {
-	if (!sectionStack.empty()) {
+	if (!sectionState.sectionStack.empty()) {
 		warning(WARNING_UNMATCHED_DIRECTIVE, "`PUSHS` without corresponding `POPS`");
 	}
 }
 
 void sect_EndSection() {
-	if (!currentSection) {
+	if (!sectionState.currentSection) {
 		fatal("Cannot end the section outside of a `SECTION`");
 	}
 
-	if (!currentUnionStack.empty()) {
+	if (!sectionState.currentUnionStack.empty()) {
 		fatal("Cannot end the section within a `UNION`");
 	}
 
-	if (currentLoadSection) {
+	if (sectionState.currentLoadSection) {
 		sect_EndLoadSection("ENDSECTION");
 	}
 
 	// Reset the section scope
-	currentSection = nullptr;
+	sectionState.currentSection = nullptr;
 	sym_ResetCurrentLabelScopes();
 }
 
@@ -1131,34 +1140,34 @@ InternedStr sect_PushSectionFragmentLiteral() {
 	static uint64_t nextFragmentLiteralID = 0;
 
 	// Like `requireCodeSection` but fatal
-	if (!currentSection) {
+	if (!sectionState.currentSection) {
 		fatal("Cannot output fragment literals outside of a `SECTION`");
 	}
-	if (!sectTypeHasData(currentSection->type)) {
+	if (!sectTypeHasData(sectionState.currentSection->type)) {
 		fatal(
 		    "Section \"%s\" cannot contain fragment literals (not `ROM0` or `ROMX`)",
-		    currentSection->name.c_str()
+		    sectionState.currentSection->name.c_str()
 		);
 	}
 
 	// This section has data (ROM0 or ROMX), so it cannot be a UNION
-	assume(currentSection->modifier != SECTION_UNION);
+	assume(sectionState.currentSection->modifier != SECTION_UNION);
 
-	if (currentLoadSection) {
+	if (sectionState.currentLoadSection) {
 		fatal("`LOAD` blocks cannot contain fragment literals");
 	}
 
 	// A section containing a fragment literal has to become a fragment too
-	currentSection->modifier = SECTION_FRAGMENT;
+	sectionState.currentSection->modifier = SECTION_FRAGMENT;
 
-	Section *parent = currentSection;
+	Section *parent = sectionState.currentSection;
 	sect_PushSection(); // Resets `currentSection`
 
 	Section *sect = createSectionFragmentLiteral(*parent);
 
 	changeSection();
-	curOffset = sect->size;
-	currentSection = sect;
+	sectionState.curOffset = sect->size;
+	sectionState.currentSection = sect;
 
 	// Return a symbol ID to use for the address of this section fragment
 	return intern("$"s + std::to_string(nextFragmentLiteralID++));
