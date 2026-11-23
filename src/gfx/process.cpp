@@ -360,7 +360,7 @@ static std::pair<std::vector<size_t>, std::vector<Palette>>
 	assume(!palettes.empty());
 
 	// "Sort" colors in the generated palettes, see the man page for the flowchart
-	if (options.palSpecType == Options::DMG) {
+	if (options.paletteConfig.type == PaletteConfig::Type::Dmg) {
 		sortGrayscale(palettes, image.colors.raw());
 	} else if (image.png.isIndexed) {
 		// A PNG image using PNG_COLOR_TYPE_RGB (2) or PNG_COLOR_TYPE_RGBA (6) can still
@@ -385,7 +385,7 @@ static std::pair<std::vector<size_t>, std::vector<Palette>>
 
 static std::pair<std::vector<size_t>, std::vector<Palette>>
     makePalsAsSpecified(std::vector<ColorSet> const &colorSets) {
-	std::vector<Palette> palettes(options.palSpec.size());
+	std::vector<Palette> palettes(options.paletteConfig.spec.size());
 
 	// If the image contains at least one transparent pixel, force transparency in the first slot of
 	// all palettes
@@ -396,7 +396,7 @@ static std::pair<std::vector<size_t>, std::vector<Palette>>
 	}
 
 	// Convert the palette spec to actual palettes
-	for (auto [spec, pal] : zip(options.palSpec, palettes)) {
+	for (auto [spec, pal] : zip(options.paletteConfig.spec, palettes)) {
 		bool skipFirst = false;
 		// If the image contains any transparent pixels, color #0 of all palettes is transparent.
 		// Thus, all explicit palette specs should leave color #0 as "#none" or transparent.
@@ -987,7 +987,7 @@ void process(Png &&png) {
 	});
 	// LCOV_EXCL_STOP
 
-	if (options.palSpecType == Options::DMG) {
+	if (options.paletteConfig.type == PaletteConfig::Type::Dmg) {
 		char const *prefix =
 		    "Image is not compatible with a DMG palette specification: it contains";
 		if (options.hasTransparentPixels) {
@@ -1163,7 +1163,7 @@ continue_visiting_tiles:;
 	}
 
 	auto [mappings, palettes] =
-	    options.palSpecType == Options::NO_SPEC || options.palSpecType == Options::DMG
+	    options.paletteConfig.type == PaletteConfig::Type::None || options.paletteConfig.type == PaletteConfig::Type::Dmg
 	        ? generatePalettes(colorSets, image)
 	        : makePalsAsSpecified(colorSets);
 	outputPalettes(palettes);

@@ -247,11 +247,11 @@ void reverse() {
 			);
 		}
 
-		if (options.hasExplicitPalSpec() && palettes != options.palSpec) {
+		if (options.paletteConfig.hasExplicitSpec() && palettes != options.paletteConfig.spec) {
 			// The explicit `-c` pal spec does not match the input `-p` palette file.
 			// Check whether their 8-to-5-bit-reduced GB colors nevertheless match.
 			std::vector<std::array<std::optional<Rgba>, MAX_PAL_COLORS>> palSpecQuantized(
-			    options.palSpec
+			    options.paletteConfig.spec
 			);
 			for (auto &pal : palSpecQuantized) {
 				for (auto &color : pal) {
@@ -266,32 +266,32 @@ void reverse() {
 			);
 			// This spacing aligns "...versus with `-c`" above the column of `-c` palettes
 			fputs("Colors specified in the palette file:         ...versus with '-c':\n", stderr);
-			for (size_t i = 0; i < palettes.size() || i < options.palSpec.size(); ++i) {
+			for (size_t i = 0; i < palettes.size() || i < options.paletteConfig.spec.size(); ++i) {
 				if (i < palettes.size()) {
 					printPalette(palettes[i]);
 				} else {
 					fputs("                                            ", stderr);
 				}
-				if (i < options.palSpec.size()) {
+				if (i < options.paletteConfig.spec.size()) {
 					fputs("  ", stderr);
-					printPalette(options.palSpec[i]);
+					printPalette(options.paletteConfig.spec[i]);
 				}
 				putc('\n', stderr);
 			}
 		}
-	} else if (options.palSpecType == Options::DMG) {
+	} else if (options.paletteConfig.type == PaletteConfig::Type::Dmg) {
 		for (size_t i = 0; i < palettes[0].size(); ++i) {
-			palettes[0][i] = grayColors[options.dmgValue(i)];
+			palettes[0][i] = grayColors[options.paletteConfig.dmgColor(i)];
 		}
 		grayscale = true;
-	} else if (options.palSpecType == Options::EMBEDDED) {
+	} else if (options.paletteConfig.type == PaletteConfig::Type::Embedded) {
 		warnx(
 		    "An embedded palette was requested, but no palette file was specified; ignoring "
 		    "request"
 		);
 		grayscale = true;
-	} else if (options.hasExplicitPalSpec()) {
-		palettes = std::move(options.palSpec); // We won't be using it again.
+	} else if (options.paletteConfig.hasExplicitSpec()) {
+		palettes = std::move(options.paletteConfig.spec); // We won't be using it again.
 
 		if (palettes.empty()) {
 			fatal("Specified 0 palettes");

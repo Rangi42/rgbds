@@ -24,6 +24,31 @@ static constexpr size_t MAX_PAL_COLORS = 4;
 struct Options;
 extern Options options;
 
+struct PaletteConfig {
+	enum class Type {
+		None,
+		Inline,
+		External,
+		Embedded,
+		Dmg,
+	};
+
+	Type type = Type::None; // -c
+	std::vector<std::array<std::optional<Rgba>, MAX_PAL_COLORS>> spec{};
+	uint8_t dmg = 0;
+	std::array<uint8_t, MAX_PAL_COLORS> dmgColors{};
+
+	bool hasExplicitSpec() const { return type == Type::Inline || type == Type::External; }
+	bool isDmg() const { return type == Type::Dmg; }
+	bool isEmbedded() const { return type == Type::Embedded; }
+	bool isAutomatic() const { return type == Type::None; }
+
+	uint8_t dmgColor(uint8_t i) const {
+		assume(i < MAX_PAL_COLORS);
+		return (dmg >> (2 * i)) & 0b11;
+	}
+};
+
 struct Options {
 	bool useColorCurve = false;   // -C
 	bool allowDedup = false;      // -u
@@ -34,16 +59,8 @@ struct Options {
 	std::string attrmap{};                           // -a, -A
 	std::optional<Rgba> bgColor{};                   // -B
 	std::array<uint8_t, NB_BANKS> baseTileIDs{0, 0}; // -b
-	enum {
-		NO_SPEC,
-		INLINE,
-		EXTERNAL,
-		EMBEDDED,
-		DMG,
-	} palSpecType = NO_SPEC; // -c
-	std::vector<std::array<std::optional<Rgba>, MAX_PAL_COLORS>> palSpec{};
-	uint8_t palSpecDmg = 0;
-	uint8_t bitDepth = 2;       // -d
+	PaletteConfig paletteConfig{}; // -c
+	uint8_t bitDepth = 2;          // -d
 	std::string inputTileset{}; // -i
 	struct {
 		uint16_t left;
@@ -70,14 +87,6 @@ struct Options {
 	uint8_t maxOpaqueColors() const { return nbColorsPerPal - hasTransparentPixels; }
 
 	uint16_t maxNbColors() const { return nbColorsPerPal * nbPalettes; }
-
-	bool hasExplicitPalSpec() const { return palSpecType == INLINE || palSpecType == EXTERNAL; }
-
-	uint8_t dmgColors[MAX_PAL_COLORS] = {};
-	uint8_t dmgValue(uint8_t i) const {
-		assume(i < MAX_PAL_COLORS);
-		return (palSpecDmg >> (2 * i)) & 0b11;
-	}
 };
 
 #endif // RGBDS_GFX_MAIN_HPP

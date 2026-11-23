@@ -108,11 +108,11 @@ uint8_t Rgba::grayIndex() const {
 	assume(isGray());
 	// 2bpp shades are inverted from RGB PNG; %00 = white, %11 = black
 	uint8_t gray = 255 - red;
-	if (options.palSpecType == Options::DMG) {
+	if (options.paletteConfig.type == PaletteConfig::Type::Dmg) {
 		assume(!options.hasTransparentPixels);
 		// Reduce gray shade from 0..<256 to 0..<4, then map to color index,
 		// then reduce to 0..<nbColorsPerPal
-		return options.dmgColors[gray * MAX_PAL_COLORS / 256] * options.nbColorsPerPal
+		return options.paletteConfig.dmgColors[gray * MAX_PAL_COLORS / 256] * options.nbColorsPerPal
 		       / MAX_PAL_COLORS;
 	}
 	// Reduce gray shade from 0..<256 to hasTransparentPixels..<nbColorsPerPal

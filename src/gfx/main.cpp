@@ -195,21 +195,21 @@ static void parseArg(int ch, char *arg) {
 	case 'c':
 		localOptions.palSpec = std::nullopt; // Allow overriding a previous pal spec
 		if (arg[0] == '#') {
-			options.palSpecType = Options::INLINE;
+			options.paletteConfig.type = PaletteConfig::Type::Inline;
 			localOptions.palSpec = arg;
 		} else if (strcasecmp(arg, "embedded") == 0) {
 			// Use PLTE, error out if missing
-			options.palSpecType = Options::EMBEDDED;
+			options.paletteConfig.type = PaletteConfig::Type::Embedded;
 		} else if (strcasecmp(arg, "auto") == 0) {
-			options.palSpecType = Options::NO_SPEC;
+			options.paletteConfig.type = PaletteConfig::Type::None;
 		} else if (strcasecmp(arg, "dmg") == 0) {
-			options.palSpecType = Options::DMG;
+			options.paletteConfig.type = PaletteConfig::Type::Dmg;
 			localOptions.palSpec = "e4"; // Same darkest-first order as `sortGrayscale`
 		} else if (strncasecmp(arg, "dmg=", literal_strlen("dmg=")) == 0) {
-			options.palSpecType = Options::DMG;
+			options.paletteConfig.type = PaletteConfig::Type::Dmg;
 			localOptions.palSpec = &arg[literal_strlen("dmg=")];
 		} else {
-			options.palSpecType = Options::EXTERNAL;
+			options.paletteConfig.type = PaletteConfig::Type::External;
 			localOptions.palSpec = arg;
 		}
 		break;
@@ -519,20 +519,20 @@ static void verboseOutputConfig() {
 	// -s/--palette-size
 	fprintf(stderr, "\tPalettes contain %" PRIu8 " colors\n", options.nbColorsPerPal);
 	// -c/--colors
-	switch (options.palSpecType) {
-	case Options::NO_SPEC:
+	switch (options.paletteConfig.type) {
+	case PaletteConfig::Type::None:
 		fputs("\tAutomatic palette generation\n", stderr);
 		break;
-	case Options::INLINE:
-	case Options::EXTERNAL:
-	case Options::EMBEDDED:
-		if (options.palSpecType == Options::EMBEDDED) {
+	case PaletteConfig::Type::Inline:
+	case PaletteConfig::Type::External:
+	case PaletteConfig::Type::Embedded:
+		if (options.paletteConfig.type == PaletteConfig::Type::Embedded) {
 			fputs("\tEmbedded palette spec from PNG indexed PLTE chunk\n", stderr);
 		} else {
 			fputs("\tExplicit palette spec\n", stderr);
 		}
 		fputs("\t[\n", stderr);
-		for (auto const &pal : options.palSpec) {
+		for (auto const &pal : options.paletteConfig.spec) {
 			fputs("\t\t", stderr);
 			for (auto const &color : pal) {
 				if (color.has_value()) {
@@ -545,8 +545,8 @@ static void verboseOutputConfig() {
 		}
 		fputs("\t]\n", stderr);
 		break;
-	case Options::DMG:
-		fprintf(stderr, "\tDMG palette spec $%02" PRIx8 "\n", options.palSpecDmg);
+	case PaletteConfig::Type::Dmg:
+		fprintf(stderr, "\tDMG palette spec $%02" PRIx8 "\n", options.paletteConfig.dmg);
 		break;
 	}
 	// -L/--slice
@@ -688,25 +688,25 @@ int main(int argc, char *argv[]) {
 	// Execute deferred pal spec parsing, now that all other params are known.
 	// Do not parse pal specs if `options.nbColorsPerPal` is invalid.
 	if (options.nbColorsPerPal > 0 && options.nbColorsPerPal <= MAX_PAL_COLORS) {
-		switch (options.palSpecType) {
-		case Options::NO_SPEC:
+		switch (options.paletteConfig.type) {
+		case PaletteConfig::Type::None:
 			assume(!localOptions.palSpec);
 			break;
-		case Options::EMBEDDED:
+		case PaletteConfig::Type::Embedded:
 			assume(!localOptions.palSpec);
 			if (useInputImage) {
 				parseEmbeddedPalSpec(png);
 			}
 			break;
-		case Options::INLINE:
+		case PaletteConfig::Type::Inline:
 			assume(localOptions.palSpec);
 			parseInlinePalSpec(localOptions.palSpec->c_str());
 			break;
-		case Options::EXTERNAL:
+		case PaletteConfig::Type::External:
 			assume(localOptions.palSpec);
 			parseExternalPalSpec(localOptions.palSpec->c_str());
 			break;
-		case Options::DMG:
+		case PaletteConfig::Type::Dmg:
 			assume(localOptions.palSpec);
 			parseDmgPalSpec(localOptions.palSpec->c_str());
 			break;
@@ -724,7 +724,7 @@ int main(int argc, char *argv[]) {
 		} else {
 			process(std::move(png));
 		}
-	} else if (!options.palettes.empty() && options.hasExplicitPalSpec() && !localOptions.reverse) {
+	} else if (!options.palettes.empty() && options.paletteConfig.hasExplicitSpec() && !localOptions.reverse) {
 		processPalettes();
 	} else {
 		usage.printAndExit("No input file specified (pass \"-\" to read from standard input)");

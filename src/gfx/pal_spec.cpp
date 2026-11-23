@@ -55,19 +55,19 @@ static uint16_t toWord(uint8_t low, uint8_t high) {
 // Builds a palette spec one color at a time, starting a new palette every `nbColorsPerPal` colors.
 class PaletteSpecBuilder {
 public:
-	PaletteSpecBuilder() { options.palSpec.clear(); }
+	PaletteSpecBuilder() { options.paletteConfig.spec.clear(); }
 
 	void addColor(Rgba color) {
 		if (colorIndex % options.nbColorsPerPal == 0) {
-			options.palSpec.emplace_back();
+			options.paletteConfig.spec.emplace_back();
 		}
-		options.palSpec.back()[colorIndex % options.nbColorsPerPal] = color;
+		options.paletteConfig.spec.back()[colorIndex % options.nbColorsPerPal] = color;
 		++colorIndex;
 	}
 
 	void removeTrailingEmptyPalette() {
 		if (colorIndex != 0 && colorIndex % options.nbColorsPerPal == 0) {
-			options.palSpec.pop_back();
+			options.paletteConfig.spec.pop_back();
 		}
 	}
 
@@ -100,15 +100,15 @@ void parseInlinePalSpec(char const * const rawArg) {
 		putc('\n', stderr);
 	};
 
-	options.palSpec.clear();
-	options.palSpec.emplace_back(); // Value-initialized, not default-init'd, so we get zeros
+	options.paletteConfig.spec.clear();
+	options.paletteConfig.spec.emplace_back(); // Value-initialized, not default-init'd, so we get zeros
 
 	size_t n = 0;        // Index into the argument
 	size_t nbColors = 0; // Number of colors in the current palette
 	for (;;) {
 		++n; // Ignore the '#' (checked either by caller or previous loop iteration)
 
-		std::optional<Rgba> &color = options.palSpec.back()[nbColors];
+		std::optional<Rgba> &color = options.paletteConfig.spec.back()[nbColors];
 		// Check for "#none" first.
 		if (strncasecmp(&rawArg[n], "none", literal_strlen("none")) == 0) {
 			color = {};
@@ -179,7 +179,7 @@ void parseInlinePalSpec(char const * const rawArg) {
 			nbColors = 0; // Start a new palette
 			// Avoid creating a spurious empty palette
 			if (n != arg.length()) {
-				options.palSpec.emplace_back();
+				options.paletteConfig.spec.emplace_back();
 			}
 			break;
 
@@ -213,8 +213,8 @@ void parseEmbeddedPalSpec(Png const &png) {
 	}
 
 	// Fill in the palette spec
-	options.palSpec.clear();
-	auto &palette = options.palSpec.emplace_back();
+	options.paletteConfig.spec.clear();
+	auto &palette = options.paletteConfig.spec.emplace_back();
 	assume(nbColors <= palette.size());
 	for (size_t i = 0; i < nbColors; ++i) {
 		palette[i] = png.palette[i];
@@ -561,9 +561,9 @@ static void parseGBCFile(char const *filename, std::filebuf &file) {
 			error(
 			    "GBC palette file \"%s\" contains %zu %zu-byte palette%s, plus %zu byte%s",
 			    filename,
-			    options.palSpec.size(),
+			    options.paletteConfig.spec.size(),
 			    palSize,
-			    options.palSpec.size() == 1 ? "" : "s",
+			    options.paletteConfig.spec.size() == 1 ? "" : "s",
 			    len,
 			    len == 1 ? "" : "s"
 			);
@@ -696,17 +696,17 @@ void parseDmgPalSpec(char const * const rawArg) {
 		return;
 	}
 
-	options.palSpecDmg = toHex(arg[0], arg[1]);
+	options.paletteConfig.dmg = toHex(arg[0], arg[1]);
 
 	// Map gray shades to their DMG color indexes for fast lookup by `Rgba::grayIndex`
 	for (uint8_t i = 0; i < MAX_PAL_COLORS; ++i) {
-		options.dmgColors[options.dmgValue(i)] = i;
+		options.paletteConfig.dmgColors[options.paletteConfig.dmgColor(i)] = i;
 	}
 
 	// Validate that DMG palette spec does not have conflicting colors
 	for (uint8_t i = 0; i < MAX_PAL_COLORS - 1; ++i) {
 		for (uint8_t j = i + 1; j < MAX_PAL_COLORS; ++j) {
-			if (options.dmgValue(i) == options.dmgValue(j)) {
+			if (options.paletteConfig.dmgColor(i) == options.paletteConfig.dmgColor(j)) {
 				error("DMG palette specification maps two gray shades to the same color index");
 				return;
 			}
