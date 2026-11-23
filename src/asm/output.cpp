@@ -16,9 +16,9 @@
 #include <string>
 #include <vector>
 
-#include "helpers.hpp" // assume, Defer
+#include "helpers.hpp" // assume
 #include "linkdefs.hpp"
-#include "util.hpp" // xfclose
+#include "util.hpp" // UniqueFile
 
 #include "asm/charmap.hpp"
 #include "asm/fstack.hpp"
@@ -214,7 +214,7 @@ void out_WriteObject() {
 		return;
 	}
 
-	FILE *file;
+	UniqueFile file;
 	char const *objectFileName = options.objectFileName->c_str();
 	if (*options.objectFileName != "-") {
 		file = fopen(objectFileName, "wb");
@@ -228,8 +228,6 @@ void out_WriteObject() {
 		fatal("Failed to open object file \"%s\": %s", objectFileName, strerror(errno));
 		// LCOV_EXCL_STOP
 	}
-	Defer closeFile{[&] { xfclose(file); }};
-
 	// Register exported symbols that weren't referenced within this assembled object, so that other
 	// objects may reference them. We do not immediately register symbols upon exporting them,
 	// because we allow purging exported symbols (see `-Wpurge`) but not referenced ones.
@@ -393,7 +391,7 @@ static bool dumpMacros(FILE *file) {
 void out_WriteState(std::string name, std::vector<StateFeature> const &features) {
 	// State files may include macro bodies, which may contain arbitrary characters,
 	// so output as binary to preserve them.
-	FILE *file;
+	UniqueFile file;
 	if (name != "-") {
 		file = fopen(name.c_str(), "wb");
 	} else {
@@ -406,8 +404,6 @@ void out_WriteState(std::string name, std::vector<StateFeature> const &features)
 		fatal("Failed to open state file \"%s\": %s", name.c_str(), strerror(errno));
 		// LCOV_EXCL_STOP
 	}
-	Defer closeFile{[&] { xfclose(file); }};
-
 	static char const *dumpHeadings[NB_STATE_FEATURES] = {
 	    "Numeric constants",
 	    "Variables",

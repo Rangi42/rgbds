@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 
 #include "helpers.hpp"
 
@@ -25,6 +26,77 @@ enum NumberBase {
 // File-closing functions that will not close standard streams
 int xfclose(FILE *file);
 int xclose(int fd);
+
+// Owning wrappers for C and POSIX file handles
+class UniqueFile {
+	FILE *file = nullptr;
+
+public:
+	UniqueFile() = default;
+	explicit UniqueFile(FILE *file) : file(file) {}
+	UniqueFile(UniqueFile const &) = delete;
+	UniqueFile &operator=(UniqueFile const &) = delete;
+	UniqueFile(UniqueFile &&other) noexcept : file(std::exchange(other.file, nullptr)) {}
+
+	UniqueFile &operator=(UniqueFile &&other) noexcept {
+		if (this != &other) {
+			reset();
+			file = std::exchange(other.file, nullptr);
+		}
+		return *this;
+	}
+	UniqueFile &operator=(FILE *newFile) {
+		reset(newFile);
+		return *this;
+	}
+	~UniqueFile() { reset(); }
+
+	FILE *get() const { return file; }
+	operator FILE *() const { return file; }
+
+	FILE *release() { return std::exchange(file, nullptr); }
+	void reset(FILE *newFile = nullptr) {
+		if (file && file != newFile) {
+			xfclose(file);
+		}
+		file = newFile;
+	}
+};
+
+class UniqueFd {
+	int fd = -1;
+
+public:
+	UniqueFd() = default;
+	explicit UniqueFd(int fd) : fd(fd) {}
+	UniqueFd(UniqueFd const &) = delete;
+	UniqueFd &operator=(UniqueFd const &) = delete;
+	UniqueFd(UniqueFd &&other) noexcept : fd(std::exchange(other.fd, -1)) {}
+
+	UniqueFd &operator=(UniqueFd &&other) noexcept {
+		if (this != &other) {
+			reset();
+			fd = std::exchange(other.fd, -1);
+		}
+		return *this;
+	}
+	UniqueFd &operator=(int newFd) {
+		reset(newFd);
+		return *this;
+	}
+	~UniqueFd() { reset(); }
+
+	int get() const { return fd; }
+	operator int() const { return fd; }
+
+	int release() { return std::exchange(fd, -1); }
+	void reset(int newFd = -1) {
+		if (fd != -1 && fd != newFd) {
+			xclose(fd);
+		}
+		fd = newFd;
+	}
+};
 
 // Measure file size with `fseek` and `ftell` idiom
 std::optional<uint64_t> seekSize(FILE *file);

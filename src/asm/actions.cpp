@@ -18,7 +18,7 @@
 #include "extern/utf8decoder.hpp"
 #include "helpers.hpp"
 #include "linkdefs.hpp"
-#include "util.hpp" // xfclose, seekSize
+#include "util.hpp" // UniqueFile, seekSize
 
 #include "asm/charmap.hpp"
 #include "asm/format.hpp"
@@ -140,7 +140,7 @@ void act_StaticAssert(AssertionType type, Expression const &expr, std::string co
 }
 
 std::optional<std::string> act_ReadFile(std::string const &name, uint32_t maxLen) {
-	FILE *file = nullptr;
+	UniqueFile file;
 	if (std::optional<std::string> fullPath = fstk_FindFile(name); fullPath) {
 		file = fopen(fullPath->c_str(), "rb");
 	}
@@ -152,8 +152,6 @@ std::optional<std::string> act_ReadFile(std::string const &name, uint32_t maxLen
 		}
 		return "";
 	}
-	Defer closeFile{[&] { xfclose(file); }};
-
 	size_t readSize = maxLen;
 	if (std::optional<uint64_t> fileSize = seekSize(file); fileSize.has_value()) {
 		// If the file is seekable and shorter than the max length,

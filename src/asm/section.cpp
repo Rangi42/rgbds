@@ -23,7 +23,7 @@
 #include "helpers.hpp"
 #include "itertools.hpp" // InsertionOrderedMap
 #include "linkdefs.hpp"
-#include "util.hpp" // xfclose, seekSize
+#include "util.hpp" // UniqueFile, seekSize
 
 #include "asm/fstack.hpp"
 #include "asm/lexer.hpp"
@@ -986,15 +986,13 @@ bool sect_BinaryFile(std::string const &name, uint32_t startPos, std::optional<u
 		return false;
 	}
 
-	FILE *file = nullptr;
+	UniqueFile file;
 	if (std::optional<std::string> fullPath = fstk_FindFile(name); fullPath) {
 		file = fopen(fullPath->c_str(), "rb");
 	}
 	if (!file) {
 		return fstk_FileError(name, "`INCBIN`");
 	}
-	Defer closeFile{[&] { xfclose(file); }};
-
 	if (std::optional<uint64_t> fileSize = seekSize(file); fileSize.has_value()) {
 		if (startPos > *fileSize) {
 			error(

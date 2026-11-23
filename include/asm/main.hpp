@@ -9,7 +9,7 @@
 #include <string>
 
 #include "helpers.hpp" // assume
-#include "util.hpp"    // xfclose
+#include "util.hpp"    // UniqueFile
 
 std::string escapeMakeChars(std::string const &str);
 
@@ -25,19 +25,13 @@ struct Options {
 	size_t maxRecursionDepth = 64;                  // -r
 	char binDigits[2] = {'0', '1'};                 // -b
 	char gfxDigits[4] = {'0', '1', '2', '3'};       // -g
-	FILE *dependFile = nullptr;                     // -M
+	UniqueFile dependFile;                          // -M
 	std::optional<std::string> targetFileName{};    // -MQ, -MT
 	MissingInclude missingIncludeState = INC_ERROR; // -MC, -MG
 	bool generatePhonyDeps = false;                 // -MP
 	std::optional<std::string> objectFileName{};    // -o
 	uint8_t padByte = 0;                            // -p
 	uint64_t maxErrors = 0;                         // -X
-
-	~Options() {
-		if (dependFile) {
-			xfclose(dependFile);
-		}
-	}
 
 	void printDep(std::string const &depName) {
 		if (dependFile) {

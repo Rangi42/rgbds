@@ -16,7 +16,7 @@
 
 #include "diagnostics.hpp"
 #include "helpers.hpp"
-#include "util.hpp" // xclose, xfclose
+#include "util.hpp" // UniqueFd
 
 #include "fix/main.hpp"
 #include "fix/mbc.hpp"
@@ -482,7 +482,7 @@ bool fix_ProcessFile(char const *name, char const *outputName) {
 		outputName = "-";
 	}
 
-	int output = -1;
+	UniqueFd output;
 	if (outputName) {
 		if (!strcmp(outputName, "-")) {
 			output = STDOUT_FILENO;
@@ -497,44 +497,40 @@ bool fix_ProcessFile(char const *name, char const *outputName) {
 			}
 		}
 	}
-	Defer closeOutput{[&] {
-		if (outputName) {
-			xclose(output);
-		}
-	}};
-
 	if (inputStdin) {
 		name = "<stdin>";
 		(void)setmode(STDIN_FILENO, O_BINARY);
 		processFile(STDIN_FILENO, output, name, 0, false);
-	} else if (int input = open(name, (outputName ? O_RDONLY : O_RDWR) | O_BINARY); input == -1) {
-		// POSIX specifies that the results of O_RDWR on a FIFO are undefined.
-		// However, this is necessary to avoid a TOCTTOU, if the file was changed between
-		// `stat()` and `open(O_RDWR)`, which could trigger the UB anyway.
-		// Thus, we're going to hope that either the `open` fails, or it succeeds but I/O
-		// operations may fail, all of which we handle.
-		error("Failed to open \"%s\" for reading+writing: %s", name, strerror(errno));
 	} else {
-		Defer closeInput{[&] { xclose(input); }};
-		if (struct stat stat; fstat(input, &stat) == -1) {
-			error("Failed to stat \"%s\": %s", name, strerror(errno)); // LCOV_EXCL_LINE
-		} else if (!S_ISREG(stat.st_mode)) { // We do not support FIFOs or symlinks
-			// LCOV_EXCL_START
-			error("\"%s\" is not a regular file, and thus cannot be modified in-place", name);
-			// LCOV_EXCL_STOP
-		} else if (stat.st_size < 0x150) {
-			// This check is in theory redundant with the one in `processFile`, but it
-			// prevents passing a file size of 0, which usually indicates pipes
-			error(
-			    "\"%s\" too short, expected at least 336 ($150) bytes, got only %jd",
-			    name,
-			    static_cast<intmax_t>(stat.st_size)
-			);
+		UniqueFd input{open(name, (outputName ? O_RDONLY : O_RDWR) | O_BINARY)};
+		if (input == -1) {
+			// POSIX specifies that the results of O_RDWR on a FIFO are undefined.
+			// However, this is necessary to avoid a TOCTTOU, if the file was changed between
+			// `stat()` and `open(O_RDWR)`, which could trigger the UB anyway.
+			// Thus, we're going to hope that either the `open` fails, or it succeeds but I/O
+			// operations may fail, all of which we handle.
+			error("Failed to open \"%s\" for reading+writing: %s", name, strerror(errno));
 		} else {
-			if (!outputName) {
-				output = input;
+			if (struct stat stat; fstat(input, &stat) == -1) {
+				error("Failed to stat \"%s\": %s", name, strerror(errno)); // LCOV_EXCL_LINE
+			} else if (!S_ISREG(stat.st_mode)) { // We do not support FIFOs or symlinks
+				// LCOV_EXCL_START
+				error("\"%s\" is not a regular file, and thus cannot be modified in-place", name);
+				// LCOV_EXCL_STOP
+			} else if (stat.st_size < 0x150) {
+				// This check is in theory redundant with the one in `processFile`, but it
+				// prevents passing a file size of 0, which usually indicates pipes
+				error(
+				    "\"%s\" too short, expected at least 336 ($150) bytes, got only %jd",
+				    name,
+				    static_cast<intmax_t>(stat.st_size)
+				);
+			} else if (!outputName) {
+				output = input.release();
+				processFile(output, output, name, stat.st_size, true);
+			} else {
+				processFile(input, output, name, stat.st_size, true);
 			}
-			processFile(input, output, name, stat.st_size, true);
 		}
 	}
 

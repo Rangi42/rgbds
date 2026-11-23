@@ -20,7 +20,7 @@
 
 #include "helpers.hpp"
 #include "linkdefs.hpp"
-#include "util.hpp" // xfclose
+#include "util.hpp" // UniqueFile
 #include "verbosity.hpp"
 #include "version.hpp"
 
@@ -505,7 +505,7 @@ static void readAssertion(
 }
 
 void obj_ReadFile(std::string const &filePath, size_t fileID) {
-	FILE *file;
+	UniqueFile file;
 	char const *fileName = filePath.c_str();
 	if (filePath != "-") {
 		file = fopen(fileName, "rb");
@@ -517,8 +517,6 @@ void obj_ReadFile(std::string const &filePath, size_t fileID) {
 	if (!file) {
 		fatal("Failed to open file \"%s\": %s", fileName, strerror(errno));
 	}
-	Defer closeFile{[&] { xfclose(file); }};
-
 	if (fileID >= objectFiles.size()) {
 		fatal("Internal error: invalid object file ID #%zu", fileID);
 	}

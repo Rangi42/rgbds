@@ -290,7 +290,7 @@ static uint8_t const nintendoLogo[] = {
 
 static void initLogo() {
 	if (options.logoFilename) {
-		FILE *logoFile;
+		UniqueFile logoFile;
 		char const *logoFilename = options.logoFilename->c_str();
 		if (*options.logoFilename != "-") {
 			logoFile = fopen(logoFilename, "rb");
@@ -306,8 +306,6 @@ static void initLogo() {
 			fatal("Failed to open \"%s\" for reading: %s", logoFilename, strerror(errno));
 			// LCOV_EXCL_STOP
 		}
-		Defer closeLogo{[&] { xfclose(logoFile); }};
-
 		uint8_t logoBpp[sizeof(options.logo)];
 		if (size_t nbRead = fread(logoBpp, 1, sizeof(logoBpp), logoFile);
 		    nbRead != sizeof(options.logo) || fgetc(logoFile) != EOF || ferror(logoFile)) {

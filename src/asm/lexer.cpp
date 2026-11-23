@@ -346,7 +346,7 @@ void LexerState::setAsCurrentState() {
 }
 
 void LexerState::setFileAsNextState(std::string const &filePath, bool updateStateNow) {
-	int fd = -1;
+	UniqueFd fd;
 
 	if (filePath == "-") {
 		path = "<stdin>";
@@ -406,8 +406,6 @@ void LexerState::setFileAsNextState(std::string const &filePath, bool updateStat
 
 	if (fd >= 0) {
 		// If the file is stdin, or if measuring its size failed, read it in pieces
-		Defer closeFile{[&] { xclose(fd); }};
-
 		// Reasonably large buffer size for `read` performance
 		char buf[8192];
 		// POSIX specifies that lengths greater than SSIZE_MAX yield implementation-defined results
